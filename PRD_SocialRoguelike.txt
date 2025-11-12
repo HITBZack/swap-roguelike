@@ -1,0 +1,189 @@
+Project PRD: Social Roguelike Browser Game
+1. Overview
+
+Title (working): TBD — Social Roguelike Browser Game
+Genre: Social roguelike / idle battler hybrid
+Style: 2D with light 2.5D depth for battles
+Platform: Web browser (desktop + mobile-friendly)
+Goal: Create a lightweight, endlessly replayable roguelike where players progress through procedurally generated stages, collect loot, and keep one item per run to build permanent power — with light social features (chat, trading, friends, guilds).
+
+2. Core Vision
+
+Fast, casual sessions that scale into deep strategy over time.
+
+Social layer encourages trading, chatting, and showing off builds — not synchronous combat.
+
+All multiplayer systems (friends, guilds, chat) are powered by Supabase realtime tables, not sockets.
+
+Simple visuals: minimal 2D pixel art with small perspective shifts for depth in combat scenes.
+
+3. Game Loop
+🌀 Core Gameplay Flow
+
+Enter Run: Player logs in and starts at stage 1 of a seeded run.
+
+Randomized Path: Based on RNG seed, each next event is one of:
+
+Combat encounter
+
+Merchant shop
+
+Item find / chest
+
+Puzzle or choice event
+
+Boss or mini-boss
+
+Combat: Auto-battler style — player’s equipped items define attack/defense/abilities.
+
+Between Battles: Player chooses upgrades, trades, or path branches.
+
+Death: Run ends; player may keep one item permanently.
+
+Social Hub: Chat, view others’ profiles, trade items, form guilds.
+
+Repeat: Infinite progression — the challenge is how long you survive.
+
+4. Visual & Design Direction
+
+UI-driven 2D interface with light shadow and perspective cues for a 2.5D feel.
+
+Style inspiration: minimalist dungeon UIs, soft pixel gradients, and clean buttons.
+
+Core combat screen (example attached) shows:
+
+Enemy centered in depth.
+
+HP bars and energy bars.
+
+Action buttons below (Attack, Convert, Ability, Skip).
+
+Everything runs smoothly in WebGL, no heavy particle effects.
+
+5. Technical Architecture
+🧱 Frontend Stack
+Component	Tech	Purpose
+Game Engine	Phaser 3 (TypeScript)	Handles 2D rendering, camera, animation, scenes
+Build System	Vite	Fast local dev, hot reload
+Language	TypeScript	For safety and AI tooling compatibility
+State Mgmt	Zustand	Lightweight global state (player, session, run)
+Audio	Howler.js	Background music and sound effects
+UI Layer	Optional React overlay for chat/inventory (if desired)	
+☁️ Backend Stack
+Component	Tech	Purpose
+Database	Supabase (Postgres)	Player data, items, runs, chat
+Auth	Supabase Auth	Email or OAuth sign-in
+Realtime	Supabase Realtime	Chat, presence, guild updates
+Storage	Supabase Storage	Sprites, avatars, item icons
+Edge Functions	Supabase Edge Functions	Optional logic for trades, marketplace later
+
+Hosting:
+
+Frontend: Netlify
+
+Backend: Supabase (no separate server required yet)
+
+Future Expansion: Render or Cloudflare Workers (only if marketplace or server validation needed)
+
+6. Database Schema (Initial)
+Table	Key Fields	Description
+profiles	id, username, avatar_url, level, last_active	Player identity and base stats
+items	id, name, rarity, type, effect_json	Item definitions
+inventory	id, player_id, item_id, is_equipped, is_permanent	Player-owned items
+runs	id, player_id, seed, biome, stage, is_active	Track ongoing or past runs
+chat_messages	id, channel_id, player_id, content, created_at	Public or guild chat
+friends	id, player_id, friend_id, status	Friend requests and relationships
+guilds	id, name, description	Guild management (later)
+guild_members	guild_id, player_id, role	Link between guilds and players
+7. Folder Structure (Frontend)
+src/
+  main.ts                # Game entrypoint (Phaser config)
+  game/
+    GameScene.ts         # Main overworld / stage handler
+    BattleScene.ts       # Combat screen (auto-battler)
+    UIScene.ts           # Overlay UI (menus, HP, inventory)
+    systems/
+      CombatSystem.ts    # Handles turn-based logic
+      EventSystem.ts     # Stage generation and events
+      ItemSystem.ts      # Item handling & equip logic
+  ui/
+    Chat.tsx             # Realtime chat overlay (optional React)
+    Inventory.tsx
+    ProfileCard.tsx
+  lib/
+    supabase.ts          # Supabase client
+    state.ts             # Zustand store for global state
+    utils.ts             # RNG, seeding, helpers
+  assets/
+    sprites/
+    audio/
+    ui/
+
+8. Core Gameplay Systems
+🧠 Combat System
+
+Auto-battler: player and enemy take turns automatically based on item stats.
+
+Items define abilities, damage modifiers, and special triggers.
+
+Player decisions (Convert, Ability, Skip) can influence outcome but aren’t fully real-time.
+
+🎲 Procedural Generation
+
+Each run uses a seed (e.g. run.seed).
+
+Seed controls:
+
+Stage type order (combat, merchant, etc.)
+
+Enemy types and difficulty
+
+Item drops and rarity
+
+Biome transitions
+
+Example:
+
+import seedrandom from "seedrandom";
+const rng = seedrandom(run.seed);
+const stageType = rng() < 0.6 ? "combat" : "merchant";
+
+🧩 Biome Structure
+
+Biome 1: 8–10 maps
+
+Biome 2: 5–6 maps
+
+Biome 3: 8–10 maps
+
+Infinite final biome after that
+→ Random enemy types scale endlessly.
+
+9. Social Features (MVP)
+Feature	Description
+Chat	Global and guild-based chat using Supabase Realtime
+Friends	Add/remove friends, view their current run summary
+Guilds	Simple grouping for chat and leaderboard (phase 2)
+Trading	Phase 2 — item ownership transfer validated via function
+10. Hosting & Deployment
+Layer	Host	Notes
+Frontend	Netlify	Static deployment from Vite build
+Backend	Supabase	DB + Auth + Realtime
+Assets	Supabase Storage or Netlify CDN	Game sprites, audio, UI icons
+11. Long-Term Expansion (Future)
+
+Marketplace: Player-driven trading economy with limited-edition items.
+
+Co-op runs: Allow two players to share progress (turn-based).
+
+Seasonal resets: Add leaderboard and “weekly seed challenges.”
+
+Cosmetics: Skins, pets, and emotes purchasable with in-game currency.
+
+12. Development Phases
+Phase	Goal	Key Deliverables
+Phase 1 – Base Setup	Foundation	Vite + Phaser + Supabase setup, login, start run, combat prototype
+Phase 2 – Progression Loop	Replayability	Items, inventory, random stages, death/keep mechanic
+Phase 3 – Social Systems	Multiplayer data layer	Chat, friends, profile viewing
+Phase 4 – Expansion	World depth	Biomes, merchants, special events
+Phase 5 – Polish	Retention	Sound, animations, effects, performance tuning

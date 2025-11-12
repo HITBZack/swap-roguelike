@@ -1,0 +1,15 @@
+/* Global resets and theming */
+html, body, #app {
+  height: 100%;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0b0e1a; /* match app background */
+  color: #e5e7ff;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
