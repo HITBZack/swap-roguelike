@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { ensureAuth } from '../lib/auth'
 import { bootGame } from '../lib/bootPhaser'
 

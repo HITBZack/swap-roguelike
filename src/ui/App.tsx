@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BattleContainer } from './BattleContainer'
 import { supabase } from '../lib/supabase'
 import { AccountModal } from './AccountModal'

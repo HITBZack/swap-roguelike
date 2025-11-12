@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useAppState } from '../lib/state'
 import { updateMyUsername } from '../lib/profile'
 
@@ -38,10 +38,6 @@ export function UsernameModal({ open }: UsernameModalProps): JSX.Element | null 
     setUi({ needUsername: false })
   }
 
-  function close(): void {
-    // Force choosing a username by not allowing close without saving
-    // If you want to allow skip, set needUsername to false here instead.
-  }
 
   return (
     <div
