@@ -68,7 +68,7 @@ async function applyProfile(): Promise<void> {
   const setUi = useAppState.getState().setUi
   const prof = await fetchMyProfile()
   if (prof) {
-    setPlayer({ id: prof.id, username: prof.username, level: prof.level })
+    setPlayer({ id: prof.id, username: prof.username, level: prof.level, avatarUrl: prof.avatar_url ?? null })
     if (!prof.username) setUi({ needUsername: true })
   }
 }

@@ -8,6 +8,7 @@ export interface PlayerState {
   id: string | null
   username: string | null
   level: number
+  avatarUrl?: string | null
 }
 
 export interface RunState {
@@ -33,7 +34,7 @@ export interface AppState {
 }
 
 const creator: StateCreator<AppState> = (set: SetState<AppState>) => ({
-  player: { id: null, username: null, level: 1 },
+  player: { id: null, username: null, level: 1, avatarUrl: null },
   run: { seed: null, biome: null, stage: 1, isActive: false },
   ui: { loading: false, error: null, needUsername: false },
   setPlayer: (p: Partial<PlayerState>) => set((s: AppState) => ({ player: { ...s.player, ...p } })),

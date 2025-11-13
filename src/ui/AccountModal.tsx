@@ -1,5 +1,8 @@
-//
+import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAppState } from '../lib/state'
+import { uploadAvatar, validateAvatarFile, deleteAvatarByUrl } from '../lib/storage'
+import { updateMyAvatarUrl } from '../lib/profile'
 
 export interface AccountModalProps {
   open: boolean
@@ -13,10 +16,57 @@ export interface AccountModalProps {
  */
 export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.Element | null {
   if (!open) return null
+  const username = useAppState((s) => s.player.username)
+  const avatarUrl = useAppState((s) => s.player.avatarUrl)
+  const setPlayer = useAppState((s) => s.setPlayer)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  async function onAvatarChange(e: Event) {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    if (!file) return
+    const err = validateAvatarFile(file)
+    if (err) { setMsg(err); return }
+    setBusy(true)
+    setMsg('Uploading avatar...')
+    const url = await uploadAvatar(file)
+    if (!url) {
+      setMsg('Upload failed. Try a different image.')
+      setBusy(false)
+      return
+    }
+    setMsg('Saving profile...')
+    const updated = await updateMyAvatarUrl(url)
+    setBusy(false)
+    if (!updated) {
+      setMsg('Could not save avatar URL. Please retry.')
+      return
+    }
+    setPlayer({ avatarUrl: updated.avatar_url })
+    setMsg('Avatar updated!')
+  }
 
   async function signOut() {
     await supabase.auth.signOut()
-    onClose()
+    // Enforce returning to login page
+    window.location.reload()
+  }
+
+  async function removeAvatar() {
+    if (!avatarUrl) return
+    setBusy(true)
+    setMsg('Removing avatar...')
+    // Best-effort remove from storage (public bucket)
+    await deleteAvatarByUrl(avatarUrl)
+    const updated = await updateMyAvatarUrl('')
+    setBusy(false)
+    if (!updated) {
+      setMsg('Could not clear avatar. Please retry.')
+      return
+    }
+    setPlayer({ avatarUrl: null })
+    setMsg('Avatar removed.')
   }
 
   return (
@@ -25,6 +75,7 @@ export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.E
       aria-modal="true"
       aria-label="Account settings"
       onClick={onClose}
+      className="anim-fade-in"
       style={{
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
         display: 'grid', placeItems: 'center', zIndex: 1000,
@@ -32,6 +83,7 @@ export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.E
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        className="anim-scale-in anim-slide-up"
         style={{
           width: 'min(560px, 92vw)', background: '#0f1226', border: '1px solid #1f2447', borderRadius: 10,
           padding: 16, color: '#e5e7ff', boxShadow: '0 10px 30px rgba(0,0,0,0.35)'
@@ -44,24 +96,33 @@ export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.E
 
         <div style={{ display: 'grid', gap: 12 }}>
           <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#b3c0ff' }}>
+            Username
+            <input value={username ?? ''} readOnly style={{ height: 32, background: '#0b0e1a', border: '1px solid #2a2f55', borderRadius: 6, color: '#e5e7ff', padding: '0 8px' }} />
+          </label>
+          <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#b3c0ff' }}>
             Email
             <input value={email} readOnly style={{ height: 32, background: '#0b0e1a', border: '1px solid #2a2f55', borderRadius: 6, color: '#e5e7ff', padding: '0 8px' }} />
           </label>
 
-          {/* TODO: Link to profile (username, avatar_url) from Supabase profiles table */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#b3c0ff' }}>
-              Username
-              <input placeholder="Coming soon" disabled style={{ height: 32, background: '#0b0e1a', border: '1px dashed #2a2f55', borderRadius: 6, color: '#94a3b8', padding: '0 8px' }} />
-            </label>
-            <label style={{ display: 'grid', gap: 6, fontSize: 12, color: '#b3c0ff' }}>
-              Avatar URL
-              <input placeholder="Coming soon" disabled style={{ height: 32, background: '#0b0e1a', border: '1px dashed #2a2f55', borderRadius: 6, color: '#94a3b8', padding: '0 8px' }} />
-            </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '96px 1fr', gap: 12, alignItems: 'center' }}>
+            <div style={{ width: 96, height: 96, borderRadius: 12, overflow: 'hidden', border: '1px solid #1f2447', background: '#0b0e1a', display: 'grid', placeItems: 'center' }}>
+              {avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={avatarUrl} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <span style={{ color: '#b3c0ff', fontSize: 12 }}>No avatar</span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              <label style={{ fontSize: 12, color: '#b3c0ff' }}>Upload new avatar (PNG, JPG, WEBP, GIF; max 5MB)</label>
+              <input disabled={busy} type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif" onChange={(e) => onAvatarChange(e as unknown as Event)} />
+              {msg && <div style={{ fontSize: 12, color: busy ? '#b3c0ff' : '#91ffb3' }}>{msg}</div>}
+            </div>
           </div>
         </div>
 
         <div style={{ display: 'flex', marginTop: 16, gap: 8, justifyContent: 'flex-end' }}>
+          <button disabled={busy || !avatarUrl} onClick={removeAvatar} style={{ height: 32, padding: '0 12px', background: '#101531', border: '1px solid #2a2f55', borderRadius: 6, color: '#b3c0ff', cursor: busy || !avatarUrl ? 'default' : 'pointer' }}>Remove avatar</button>
           <button onClick={onClose} style={{ height: 32, padding: '0 12px', background: '#101531', border: '1px solid #2a2f55', borderRadius: 6, color: '#b3c0ff', cursor: 'pointer' }}>Close</button>
           <button onClick={signOut} style={{ height: 32, padding: '0 12px', background: '#e11d48', border: '1px solid #dc143c', borderRadius: 6, color: 'white', cursor: 'pointer' }}>Sign out</button>
         </div>
