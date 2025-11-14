@@ -1,4 +1,5 @@
 import { fromSeed, pickWeighted, int } from '../lib/rng'
+import { UNIQUE_STAGE_IDS } from './UniqueCatalog'
 import type { RNG } from '../lib/rng'
 import { createRun, fetchActiveRun, updateRunProgress, listRunItems, insertRunItems, replaceRunItems } from './RunPersistence'
 import { listLoadout } from './Inventory'
@@ -12,7 +13,9 @@ export type StagePlan = {
   index: number
   type: StageType
   combatType?: CombatType
+  uniqueId?: string
   livesRemaining?: number
+  blessedItemIds?: string[]
 }
 
 export type RunDTO = {
@@ -48,6 +51,7 @@ class GameManager {
     const biomeIndex = 0
     const stageIndex = 0
     const stagePlan = this.generateStagePlan(biomeIndex, stageIndex)
+    stagePlan.blessedItemIds = []
     stagePlan.livesRemaining = 3
     const rec = await createRun(s, biomeIndex, stageIndex, stagePlan)
     if (!rec) return null
@@ -77,6 +81,7 @@ class GameManager {
     this.rng = fromSeed(rec.seed)
     this.biomeStageCounts = this.generateBiomeCounts(this.rng)
     const stagePlan = rec.stage_plan as StagePlan
+    if (!stagePlan.blessedItemIds) stagePlan.blessedItemIds = []
     this.run = { id: rec.id, seed: rec.seed, biomeIndex: rec.biome_index, stageIndex: rec.stage_index, status: rec.status, stagePlan }
     this.runItems = await listRunItems(rec.id)
     this.runStartEpochMs = Date.parse(rec.created_at)
@@ -114,6 +119,32 @@ class GameManager {
 
   setRunItems(items: ItemInstance[]): void {
     this.runItems = items
+  }
+
+  // Blessed items API
+  getBlessedItems(): string[] {
+    return this.run?.stagePlan.blessedItemIds ?? []
+  }
+
+  isItemBlessed(id: string): boolean {
+    const set = this.run?.stagePlan.blessedItemIds ?? []
+    return set.includes(id)
+  }
+
+  addBlessedItem(id: string): void {
+    if (!this.run) return
+    const list = this.run.stagePlan.blessedItemIds ?? []
+    if (!list.includes(id)) list.push(id)
+    this.run.stagePlan.blessedItemIds = list
+  }
+
+  getEffectiveStacks(id: string, stacks: number): number {
+    return this.isItemBlessed(id) ? (stacks * 2) : stacks
+  }
+
+  getEffectiveRunItems(): ItemInstance[] {
+    const raw = this.getRunItems()
+    return raw.map(it => ({ id: it.id, stacks: this.getEffectiveStacks(it.id, it.stacks ?? 1) }))
   }
 
   async persistRunItems(): Promise<boolean> {
@@ -196,15 +227,20 @@ class GameManager {
       { value: 'unique', weight: 0.10 }
     ])
     let combatType: CombatType | undefined
+    let uniqueId: string | undefined
     if (type === 'combat') {
       combatType = pickWeighted<CombatType>(this.rng, [
-        { value: 'single', weight: 0.6 },
-        { value: 'multi', weight: 0.25 },
-        { value: 'miniboss', weight: 0.1 },
-        { value: 'boss', weight: 0.05 }
+        { value: 'single', weight: 0.60 },
+        { value: 'multi', weight: 0.26 },
+        { value: 'miniboss', weight: 0.12 },
+        { value: 'boss', weight: 0.02 }
       ])
+    } else if (type === 'unique') {
+      const pool = UNIQUE_STAGE_IDS
+      const idx = pool.length > 0 ? int(this.rng, 0, pool.length - 1) : 0
+      uniqueId = pool[idx] ?? undefined
     }
-    return { biomeId, index: stageIndex, type, combatType }
+    return { biomeId, index: stageIndex, type, combatType, uniqueId }
   }
 }
 

@@ -9,8 +9,10 @@ import type { StagePlan } from '../services/GameManager'
 import { runSingleCombat, runMultiCombat, runMiniBoss } from '../services/BattleManager'
 import { completeRunAndMaybeReward } from '../services/RunRewards'
 import { itemRegistry } from '../services/items/registry'
+import { getEnemiesFor } from '../services/enemies/registry'
 import { recordBattleStats, recordChoiceStats } from '../services/RunStats'
 import { pickChoiceOptions } from '../services/Choices'
+import { fromSeed } from '../lib/rng'
 
 /**
  * GameScene
@@ -97,22 +99,42 @@ export class GameScene extends Phaser.Scene {
 
       const stage: StagePlan | null = gameManager.getCurrentStage()
       const runItems = gameManager.getRunItems()
-      let enemyKeyForStage: string | null = null
+      let selectedEnemyImageKey: string | null = null
+      let selectedEnemyName: string | null = null
+      let selectedEnemyIsBlessed = false
       if (stage?.type === 'combat' && stage.combatType) {
         this.add.text(this.cameras.main.width - 12, 8, `Combat: ${stage.combatType}`, { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', align: 'right' }).setOrigin(1, 0)
-        const enemyIndexTop = ((): number => {
-          let h = 2166136261 >>> 0
-          const str = `${run.seed}|${run.stageIndex + run.biomeIndex * 100}`
-          for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) }
-          return this.enemyKeys.length > 0 ? (h >>> 0) % this.enemyKeys.length : 0
-        })()
-        enemyKeyForStage = this.enemyKeys[enemyIndexTop] ?? null
-        if (enemyKeyForStage) {
-          // Clean up name: remove prefix, extension, and trailing '-icon' or '_icon'
-          const raw = enemyKeyForStage.replace(/^enemy:/, '')
-          const stripped = raw.replace(/\.png$/i, '').replace(/[-_]?icon$/i, '')
-          const name = stripped.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-          this.add.text(this.cameras.main.width - 12, 26, `Enemy: ${name}`, { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff', align: 'right' }).setOrigin(1, 0).setDepth(50)
+        const stageNumber = run.stageIndex + run.biomeIndex * 100
+        const biomeId = run.stagePlan.biomeId
+        const pool = getEnemiesFor(biomeId, stage.combatType)
+        if (pool.length > 0) {
+          const idx = ((): number => {
+            let h = 2166136261 >>> 0
+            const str = `${run.seed}|${stageNumber}`
+            for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) }
+            return (h >>> 0) % pool.length
+          })()
+          const def = pool[idx]
+          selectedEnemyImageKey = def.imageKey
+          selectedEnemyName = def.displayName
+          selectedEnemyIsBlessed = !!def.tags.isBlessed
+        } else {
+          const idx = ((): number => {
+            let h = 2166136261 >>> 0
+            const str = `${run.seed}|${stageNumber}`
+            for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) }
+            return this.enemyKeys.length > 0 ? (h >>> 0) % this.enemyKeys.length : 0
+          })()
+          const key = this.enemyKeys[idx] ?? null
+          if (key) {
+            selectedEnemyImageKey = key
+            const raw = key.replace(/^enemy:/, '')
+            const stripped = raw.replace(/\.png$/i, '').replace(/[-_]?icon$/i, '')
+            selectedEnemyName = stripped.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+          }
+        }
+        if (selectedEnemyName) {
+          this.add.text(this.cameras.main.width - 12, 26, `Enemy: ${selectedEnemyName}`, { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff', align: 'right' }).setOrigin(1, 0).setDepth(50)
         }
       }
 
@@ -148,14 +170,16 @@ export class GameScene extends Phaser.Scene {
 
       function renderItemsPanel(): void {
         itemsGroup.removeAll(true)
-        const data = summarizeItems(gameManager.getRunItems())
-        if (data.length === 0) {
+        const effective = summarizeItems(gameManager.getEffectiveRunItems())
+        const raw = summarizeItems(gameManager.getRunItems())
+        const blessedSet = new Set(gameManager.getBlessedItems())
+        if (effective.length === 0) {
           itemsGroup.add(
             that.add.text(4, 0, 'None', { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff' })
           )
           return
         }
-        data.forEach((rec, idx) => {
+        effective.forEach((rec, idx) => {
           const r = Math.floor(idx / cols)
           const c = idx % cols
           const x = 4 + c * (tileSize + gap)
@@ -177,12 +201,22 @@ export class GameScene extends Phaser.Scene {
             const txt = that.add.text(x + tileSize / 2, y + tileSize / 2, label, { fontFamily: 'monospace', fontSize: '11px', color: '#e5e7ff' }).setOrigin(0.5)
             itemsGroup.add(txt)
           }
-          if (rec.count > 1) {
-            const badge = that.add.rectangle(x + tileSize - 10, y + tileSize - 10, 16, 12, 0x111842, 1).setOrigin(0.5)
-            badge.setStrokeStyle(1, 0x3a428a)
-            const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: '#b3c0ff' }).setOrigin(0.5)
+          const rawCount = raw.find(a => a.id === rec.id)?.count ?? rec.count
+          const isBlessed = blessedSet.has(rec.id)
+          if (rec.count > 0) {
+            const badgeColor = isBlessed ? 0x6a5200 : 0x111842
+            const strokeColor = isBlessed ? 0xd4af37 : 0x3a428a
+            const textColor = isBlessed ? '#ffd166' : '#b3c0ff'
+            const badge = that.add.rectangle(x + tileSize - 10, y + tileSize - 10, 18, 12, badgeColor, 1).setOrigin(0.5)
+            badge.setStrokeStyle(1, strokeColor)
+            const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: textColor }).setOrigin(0.5)
             itemsGroup.add(badge)
             itemsGroup.add(qty)
+            if (isBlessed && rawCount !== rec.count) {
+              // small golden dot indicator for blessed
+              const dot = that.add.rectangle(x + tileSize - 2, y + 2, 4, 4, 0xd4af37, 1).setOrigin(1, 0)
+              itemsGroup.add(dot)
+            }
           }
         })
       }
@@ -205,7 +239,8 @@ export class GameScene extends Phaser.Scene {
         const close = that.add.text(panel.x + w / 2 - 12, panel.y - h / 2 + 8, '✕', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).setDepth(1002)
         const grid = that.add.container(panel.x - w / 2 + 12, panel.y - h / 2 + 34).setDepth(1002)
         const info = that.add.text(panel.x - w / 2 + 12, panel.y + h / 2 - 20, 'Click an item for details', { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff' }).setOrigin(0, 1).setDepth(1002)
-        const data = summarizeItems(gameManager.getRunItems())
+        const blessedSet = new Set(gameManager.getBlessedItems())
+        const data = summarizeItems(gameManager.getEffectiveRunItems())
         const M = 6
         const T = 48
         const C = Math.max(4, Math.floor((w - 24) / (T + M)))
@@ -238,10 +273,14 @@ export class GameScene extends Phaser.Scene {
             info.setText(`${name}  x${rec.count}\n${desc}`)
           })
           grid.add(hit)
-          if (rec.count > 1) {
-            const badge = that.add.rectangle(x + T - 10, y + T - 10, 16, 12, 0x111842, 1).setOrigin(0.5).setDepth(1002)
-            badge.setStrokeStyle(1, 0x3a428a)
-            const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: '#b3c0ff' }).setOrigin(0.5).setDepth(1002)
+          const isBlessed = blessedSet.has(rec.id)
+          if (rec.count > 0) {
+            const badgeColor = isBlessed ? 0x6a5200 : 0x111842
+            const strokeColor = isBlessed ? 0xd4af37 : 0x3a428a
+            const textColor = isBlessed ? '#ffd166' : '#b3c0ff'
+            const badge = that.add.rectangle(x + T - 10, y + T - 10, 18, 12, badgeColor, 1).setOrigin(0.5).setDepth(1002)
+            badge.setStrokeStyle(1, strokeColor)
+            const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: textColor }).setOrigin(0.5).setDepth(1002)
             grid.add(badge); grid.add(qty)
           }
         })
@@ -260,20 +299,9 @@ export class GameScene extends Phaser.Scene {
       frame.setDepth(20)
 
       // Place enemy inside transparent window of frame
-      function pickDeterministicIndex(seed: string, stageNumber: number, n: number): number {
-        let h = 2166136261 >>> 0
-        const str = `${seed}|${stageNumber}`
-        for (let i = 0; i < str.length; i++) {
-          h ^= str.charCodeAt(i)
-          h = Math.imul(h, 16777619)
-        }
-        return n > 0 ? (h >>> 0) % n : 0
-      }
-
       let enemySprite: Phaser.GameObjects.Image | null = null
       if (stage?.type === 'combat') {
-        const enemyIndex = pickDeterministicIndex(run.seed, run.stageIndex + run.biomeIndex * 100, this.enemyKeys.length)
-        const enemyKey = this.enemyKeys[enemyIndex]
+        const enemyKey = selectedEnemyImageKey
         if (enemyKey) {
           enemySprite = this.add.image(frame.x, frame.y + frame.displayHeight * 0.20, enemyKey).setOrigin(0.5, 1)
           const maxW = frame.displayWidth * 0.97
@@ -282,6 +310,15 @@ export class GameScene extends Phaser.Scene {
           const sh = maxH / enemySprite.height
           enemySprite.setScale(Math.min(sw, sh))
           enemySprite.setDepth(10)
+          if (selectedEnemyIsBlessed) {
+            enemySprite.setTint(0xffd166)
+            const glow = this.add.image(enemySprite.x, enemySprite.y, enemyKey).setOrigin(0.5, 1)
+            glow.setScale(enemySprite.scale * 1.04)
+            glow.setBlendMode(Phaser.BlendModes.ADD)
+            glow.setTint(0xffe29f)
+            glow.setAlpha(0.35)
+            glow.setDepth(9)
+          }
         }
       }
 
@@ -405,6 +442,23 @@ export class GameScene extends Phaser.Scene {
           if (result.outcome === 'win') {
             if (stage.combatType === 'miniboss') gameManager.incMinibossDefeated()
             if (stage.combatType === 'boss') gameManager.incBossDefeated()
+            // Blessed enemy reward: 25% chance to bless a random owned item for the remainder of the run
+            if (selectedEnemyIsBlessed) {
+              const rng = fromSeed(`${run.seed}|${stageNumber}|bless`)
+              const roll = rng.next()
+              if (roll < 0.25) {
+                const owned = Array.from(new Set(gameManager.getRunItems().map(it => it.id)))
+                if (owned.length > 0) {
+                  const pickIdx = Math.floor(rng.next() * owned.length)
+                  const chosen = owned[pickIdx]
+                  gameManager.addBlessedItem(chosen)
+                  await gameManager.persistStagePlan()
+                  renderItemsPanel()
+                  const cur = logText.text ? `${logText.text}\n` : ''
+                  updateLog(cur + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
+                }
+              }
+            }
           }
           if (result.outcome === 'loss') {
             const livesLeft = gameManager.decrementLife()
@@ -510,6 +564,134 @@ export class GameScene extends Phaser.Scene {
           return btn
         })
         updateLog('Make a choice...', false)
+      } else if (stage?.type === 'unique' && run) {
+        const bottomY = frame.y + frame.displayHeight / 2.27
+        const slotOffset = 220 * sFrame
+        const rightSlotX = frame.x + slotOffset
+        const makeImgBtn = (key: string, x: number, y: number, onUp: () => void) => {
+          const base = sFrame
+          const glow = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(219)
+          glow.setScale(base * 1.06)
+          glow.setBlendMode(Phaser.BlendModes.ADD)
+          glow.setTint(0x99ccff)
+          glow.setAlpha(0)
+          const img = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(220)
+          img.setScale(base)
+          img.setInteractive({ useHandCursor: true })
+          img.on('pointerover', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35) })
+          img.on('pointerout', () => { img.setScale(base); img.clearTint(); glow.setAlpha(0) })
+          img.on('pointerdown', () => { img.setScale(base * 0.98); img.setTint(0xd7e6ff); glow.setAlpha(0.45) })
+          img.on('pointerup', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35); onUp() })
+          return img
+        }
+
+        const uniqueId = stage.uniqueId
+        if (uniqueId === 'pedestal_duplicate') {
+          const desc = "You encounter a strange pedestal in the middle of nowhere. You've heard stories that they can duplicate whatever's placed on top of them."
+          const cur = logText.text ? `${logText.text}\n` : ''
+          updateLog(cur + desc)
+          const emptyKey = 'enemy:empty'
+          if (this.textures.exists(emptyKey)) {
+            const sprite = this.add.image(frame.x, frame.y + frame.displayHeight * 0.20, emptyKey).setOrigin(0.5, 1)
+            const maxW = frame.displayWidth * 0.97
+            const maxH = frame.displayHeight * 0.74
+            const sw = maxW / sprite.width
+            const sh = maxH / sprite.height
+            sprite.setScale(Math.min(sw, sh))
+            sprite.setDepth(10)
+          }
+
+          const itemsNow = gameManager.getRunItems()
+          if (itemsNow.length === 0) {
+            const cur2 = logText.text ? `${logText.text}\n` : ''
+            updateLog(cur2 + 'You have no items to duplicate.')
+            makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+              await gameManager.advance()
+              this.scene.restart()
+            })
+          } else {
+            const that = this
+            const camW = that.cameras.main.width
+            const camH = that.cameras.main.height
+            const overlay = that.add.rectangle(0, 0, camW, camH, 0x000000, 0.5).setOrigin(0).setInteractive().setDepth(1000)
+            const w = Math.min(560, camW - 32)
+            const h = Math.min(420, Math.max(300, camH - 120))
+            const panel = that.add.rectangle(camW / 2, camH / 2, w, h, 0x0f1226, 1).setOrigin(0.5).setDepth(1001)
+            panel.setStrokeStyle(1, 0x2a2f55)
+            const title = that.add.text(panel.x - w / 2 + 12, panel.y - h / 2 + 8, 'Select an item to duplicate', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' }).setDepth(1002)
+            const close = that.add.text(panel.x + w / 2 - 12, panel.y - h / 2 + 8, '✕', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).setDepth(1002)
+            const grid = that.add.container(panel.x - w / 2 + 12, panel.y - h / 2 + 34).setDepth(1002)
+            const data = summarizeItems(gameManager.getRunItems())
+            const M = 6
+            const T = 48
+            const C = Math.max(4, Math.floor((w - 24) / (T + M)))
+            const destroyModal = () => { overlay.destroy(); panel.destroy(); title.destroy(); close.destroy(); grid.destroy() }
+            data.forEach((rec, idx) => {
+              const r = Math.floor(idx / C)
+              const c = idx % C
+              const x = c * (T + M)
+              const y = r * (T + M)
+              const box = that.add.rectangle(x, y, T, T, 0x0b0e1a, 1).setOrigin(0).setDepth(1002)
+              box.setStrokeStyle(1, 0x2a2f55)
+              grid.add(box)
+              const def = itemRegistry.get(rec.id)
+              const imgKey = resolveItemImgKey(rec.id)
+              if (imgKey && that.textures.exists(imgKey)) {
+                const img = that.add.image(x + T / 2, y + T / 2, imgKey).setOrigin(0.5).setDepth(1002)
+                const max = T - 8
+                const sw = max / img.width
+                const sh = max / img.height
+                img.setScale(Math.min(sw, sh))
+                grid.add(img)
+              } else {
+                const label = (def?.name ?? rec.id).slice(0, 2).toUpperCase()
+                const txt = that.add.text(x + T / 2, y + T / 2, label, { fontFamily: 'monospace', fontSize: '12px', color: '#e5e7ff' }).setOrigin(0.5).setDepth(1002)
+                grid.add(txt)
+              }
+              const hit = that.add.zone(x, y, T, T).setOrigin(0).setInteractive().setDepth(1003)
+              hit.on('pointerdown', async () => {
+                const before = gameManager.getRunItems()
+                const beforeTotal = before.reduce((a, it) => a + (it.stacks ?? 0), 0)
+                const updated = before.slice()
+                updated.push({ id: rec.id, stacks: 1 })
+                gameManager.setRunItems(updated)
+                const afterTotal = updated.reduce((a, it) => a + (it.stacks ?? 0), 0)
+                const delta = afterTotal - beforeTotal
+                if (delta > 0) gameManager.addItemsGained(delta)
+                renderItemsPanel()
+                await gameManager.persistRunItems()
+                const cur3 = logText.text ? `${logText.text}\n` : ''
+                updateLog(cur3 + `The pedestal hums. Your ${rec.id} is duplicated.`)
+                destroyModal()
+                makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+                  await gameManager.advance()
+                  that.scene.restart()
+                })
+              })
+              grid.add(hit)
+              if (rec.count > 1) {
+                const badge = that.add.rectangle(x + T - 10, y + T - 10, 16, 12, 0x111842, 1).setOrigin(0.5).setDepth(1002)
+                badge.setStrokeStyle(1, 0x3a428a)
+                const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: '#b3c0ff' }).setOrigin(0.5).setDepth(1002)
+                grid.add(badge); grid.add(qty)
+              }
+            })
+            const closeAll = () => {
+              destroyModal()
+              makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+                await gameManager.advance()
+                this.scene.restart()
+              })
+            }
+            overlay.on('pointerdown', closeAll)
+            close.on('pointerdown', closeAll)
+          }
+        } else {
+          makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+            await gameManager.advance()
+            this.scene.restart()
+          })
+        }
       } else {
         updateLog('No battle this stage.', false)
       }
