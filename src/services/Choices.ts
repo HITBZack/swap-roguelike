@@ -1,4 +1,5 @@
-import { fromSeed, int, pickWeighted } from '../lib/rng'
+import { fromSeed, int } from '../lib/rng'
+import { itemRegistry } from './items/registry'
 import type { ItemInstance } from './items/types'
 import { choiceMetaById } from './ChoicesContent'
 
@@ -8,6 +9,36 @@ export type ChoiceOutcome = {
   triggerMiniboss?: boolean
   enemiesKilled?: number
   poorDelta?: number
+}
+
+function pickRandomFromArray<T>(rng: ReturnType<typeof fromSeed> | { next: () => number }, arr: T[]): T {
+  const idx = int(rng as any, 0, Math.max(0, arr.length - 1))
+  return arr[idx]
+}
+
+function pickRandomRegistryItemId(rng: ReturnType<typeof fromSeed> | { next: () => number }, count = 1): string | string[] {
+  const ids = Array.from(itemRegistry.keys())
+  if (ids.length === 0) return count === 1 ? 'lucky_clover' : []
+  if (count === 1) return pickRandomFromArray(rng, ids)
+  const picked: string[] = []
+  for (let i = 0; i < count; i++) picked.push(pickRandomFromArray(rng, ids))
+  return picked
+}
+
+function pickRandomRegistryItemIdByRarity(
+  rng: ReturnType<typeof fromSeed> | { next: () => number },
+  allowed: Set<string>,
+  count = 1
+): string | string[] {
+  const filtered = Array.from(itemRegistry.values())
+    .filter(def => allowed.has(def.rarity))
+    .map(def => def.id)
+  const pool = filtered.length > 0 ? filtered : Array.from(itemRegistry.keys())
+  if (pool.length === 0) return count === 1 ? 'lucky_clover' : []
+  if (count === 1) return pickRandomFromArray(rng, pool)
+  const picked: string[] = []
+  for (let i = 0; i < count; i++) picked.push(pickRandomFromArray(rng, pool))
+  return picked
 }
 
 export type ChoiceOption = {
@@ -71,17 +102,13 @@ const baseChoices: ChoiceOption[] = [
       } else if (roll <= 10) {
         log.push('Nothing happens.')
       } else if (roll <= 17) {
-        // grant a modest boon
-        const grant = pickWeighted(rng, [
-          { value: 'fire_pendant', weight: 1 },
-          { value: 'steel_shield', weight: 1 },
-          { value: 'blood_dagger', weight: 1 }
-        ])
+        const grant = pickRandomRegistryItemId(rng) as string
         items.push({ id: grant, stacks: 1 })
         log.push(`You feel fortunate. You gain a ${grant}.`)
       } else {
-        items.push({ id: 'lucky_clover', stacks: 1 })
-        log.push('Critical success! You gain a lucky_clover.')
+        const grant = pickRandomRegistryItemId(rng) as string
+        items.push({ id: grant, stacks: 1 })
+        log.push(`Critical success! You gain a ${grant}.`)
       }
       return { log, updatedRunItems: items, poorDelta }
     }
@@ -97,6 +124,85 @@ const baseChoices: ChoiceOption[] = [
       log.push('You step into the cave... A mini-boss emerges!')
       return { log, updatedRunItems: cloneRunItems(runItems), triggerMiniboss: true }
     }
+  },
+  {
+    id: 'wandering_merchant',
+    title: 'A wandering merchant offers a trade',
+    description: 'Trade one random item for a mystery item? Could be better, could be worse.',
+    tags: ['event', 'items', 'risk'],
+    resolve: async (seed, stageNumber, runItems) => {
+      const rng = fromSeed(`${seed}|choice|${stageNumber}|merchant`)
+      const items = cloneRunItems(runItems)
+      const log: string[] = []
+      if (items.length === 0) {
+        log.push('You have nothing to trade. The merchant shrugs and leaves.')
+        return { log, updatedRunItems: items, poorDelta: 0 }
+      }
+      const giveIdx = int(rng, 0, items.length - 1)
+      const given = items[giveIdx]
+      given.stacks -= 1
+      if (given.stacks <= 0) items.splice(giveIdx, 1)
+      log.push(`You hand over a ${given.id}.`)
+      const reward = pickRandomRegistryItemIdByRarity(rng, new Set(['rare', 'epic', 'legendary', 'unique'])) as string
+      items.push({ id: reward, stacks: 1 })
+      log.push(`The merchant gives you a ${reward}.`)
+      return { log, updatedRunItems: items, poorDelta: 0 }
+    }
+  },
+  {
+    id: 'ancient_shrine',
+    title: 'An ancient shrine hums with energy',
+    description: 'Offer an item to the shrine to receive a blessing (or a curse).',
+    tags: ['event', 'risk'],
+    resolve: async (seed, stageNumber, runItems) => {
+      const rng = fromSeed(`${seed}|choice|${stageNumber}|shrine`)
+      const items = cloneRunItems(runItems)
+      const log: string[] = []
+      if (items.length === 0) {
+        log.push('You have nothing to offer. The shrine grows quiet.')
+        return { log, updatedRunItems: items, poorDelta: 0 }
+      }
+      const idx = int(rng, 0, items.length - 1)
+      const offered = items[idx]
+      offered.stacks -= 1
+      if (offered.stacks <= 0) items.splice(idx, 1)
+      log.push(`You leave a ${offered.id} at the shrine.`)
+      if (rng.next() < 0.6) {
+        items.push({ id: 'lucky_clover', stacks: 1 })
+        log.push('A warm light surrounds you. You gained a lucky_clover!')
+        return { log, updatedRunItems: items, poorDelta: 0 }
+      } else {
+        log.push('The air turns cold. Nothing happens...')
+        return { log, updatedRunItems: items, poorDelta: 1 }
+      }
+    }
+  },
+  {
+    id: 'hidden_cache',
+    title: 'You spot a hidden cache',
+    description: 'Pry it open and claim the contents.',
+    tags: ['reward', 'items'],
+    resolve: async (seed, stageNumber, runItems) => {
+      const rng = fromSeed(`${seed}|choice|${stageNumber}|cache`)
+      const items = cloneRunItems(runItems)
+      const log: string[] = []
+      const n = int(rng, 1, 2)
+      const picks = pickRandomRegistryItemId(rng, n) as string[]
+      for (const pid of picks) items.push({ id: pid, stacks: 1 })
+      log.push(`You open the cache and find ${n} item(s).`)
+      return { log, updatedRunItems: items, poorDelta: 0 }
+    }
+  },
+  {
+    id: 'challenge_bell',
+    title: 'Ring the challenge bell',
+    description: 'Summon a foe for better spoils.',
+    tags: ['combat', 'miniboss'],
+    linkedGroups: ['danger'],
+    resolve: async (_seed, _stageNumber, runItems) => {
+      const log: string[] = ['You ring the bell. A challenge approaches!']
+      return { log, updatedRunItems: cloneRunItems(runItems), triggerMiniboss: true }
+    }
   }
 ]
 
@@ -107,11 +213,13 @@ export const choiceRegistry: ChoiceOption[] = baseChoices.map(c => {
   return { ...c, title: meta.title || c.title, description: meta.description || c.description, tags: meta.tags.length ? meta.tags : c.tags, linkedGroups: meta.linkedGroups.length ? meta.linkedGroups : c.linkedGroups }
 })
 
-export function pickChoiceOptions(seed: string, stageNumber: number, count = 3): ChoiceOption[] {
+export function pickChoiceOptions(seed: string, stageNumber: number, _count = 3): ChoiceOption[] {
   const rng = fromSeed(`${seed}|choice|${stageNumber}`)
   const pool = [...choiceRegistry]
   const picked: ChoiceOption[] = []
   if (pool.length === 0) return picked
+  // Roll how many options to show (2 or 3)
+  const target = int(rng, 2, 3)
   // First pick: uniform
   let idx = int(rng, 0, pool.length - 1)
   const first = pool.splice(idx, 1)[0]
@@ -119,7 +227,7 @@ export function pickChoiceOptions(seed: string, stageNumber: number, count = 3):
   // Next picks: bias toward shared tags or linked groups with first
   const tags = new Set(first.tags)
   const groups = new Set(first.linkedGroups ?? [])
-  while (picked.length < count && pool.length > 0) {
+  while (picked.length < target && pool.length > 0) {
     const preferred = pool.filter(opt => opt.tags.some(t => tags.has(t)) || (opt.linkedGroups ?? []).some(g => groups.has(g)))
     const bucket = preferred.length > 0 ? preferred : pool
     idx = int(rng, 0, bucket.length - 1)

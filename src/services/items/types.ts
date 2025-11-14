@@ -86,6 +86,7 @@ export interface ItemDefinition extends ItemEffectHooks {
   name: string
   description: string
   rarity: Rarity
+  imageKey?: string
 }
 
 export interface ItemInstance {

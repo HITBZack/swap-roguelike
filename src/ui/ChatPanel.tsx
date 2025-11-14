@@ -74,24 +74,6 @@ export function ChatPanel({ onUserClick }: ChatPanelProps): JSX.Element {
               const { data: prof } = await supabase.from('profiles').select('username,avatar_url').eq('id', uid).single()
               myMeta = { username: prof?.username ?? null, avatar_url: prof?.avatar_url ?? null }
             }
-
-  // Load pending friend requests (addressed to me)
-  useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      if (!myUserId) return
-      const rows = await listPendingRequests()
-      if (mounted && rows) setPendingReqs(rows)
-    })()
-    const fr = supabase
-      .channel('public:friendships')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, async () => {
-        const rows = await listPendingRequests()
-        if (mounted && rows) setPendingReqs(rows)
-      })
-      .subscribe()
-    return () => { mounted = false; supabase.removeChannel(fr) }
-  }, [myUserId])
             await presenceChannel.track({ user_id: uid || 'anon', username: myMeta.username, avatar_url: myMeta.avatar_url })
           }
         })
@@ -128,6 +110,24 @@ export function ChatPanel({ onUserClick }: ChatPanelProps): JSX.Element {
       }
     })()
   }, [])
+
+  // Load pending friend requests (addressed to me)
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      if (!myUserId) return
+      const rows = await listPendingRequests()
+      if (mounted && rows) setPendingReqs(rows)
+    })()
+    const fr = supabase
+      .channel('public:friendships')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, async () => {
+        const rows = await listPendingRequests()
+        if (mounted && rows) setPendingReqs(rows)
+      })
+      .subscribe()
+    return () => { mounted = false; supabase.removeChannel(fr) }
+  }, [myUserId])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -280,7 +280,7 @@ export function ChatPanel({ onUserClick }: ChatPanelProps): JSX.Element {
           )}
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, padding: 12, borderTop: '1px solid #1f2447', background: '#0f1226' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 4, padding: 12, borderTop: '1px solid #1f2447', background: '#0f1226' }}>
         <div style={{ position: 'relative' }}>
           <textarea
             value={input}
