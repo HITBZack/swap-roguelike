@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BattleContainer } from './BattleContainer'
 import { supabase } from '../lib/supabase'
+import { fetchMyProfile, type ProfileDTO } from '../lib/profile'
 import { AccountModal } from './AccountModal'
 import { PlayerCardModal } from './PlayerCardModal'
 import { ChatPanel } from './ChatPanel'
@@ -8,12 +9,15 @@ import { useAppState } from '../lib/state'
 import { UsernameModal } from './UsernameModal'
 import { listInventory, listLoadout, equipItem, decrementLoadout, clearLoadout } from '../services/Inventory'
 import { itemRegistry } from '../services/items/registry'
+import type { ItemInstance } from '../services/items/types'
+import { computeBaseStats, buildEffectiveStats } from '../services/player/Stats'
 import { gameManager } from '../services/GameManager'
 
 const itemImageUrls = import.meta.glob<string>('../assets/item_images/*.png', { eager: true, as: 'url' })
 
 export function App(): JSX.Element {
   const [email, setEmail] = useState<string>('')
+  const [profile, setProfile] = useState<ProfileDTO | null>(null)
   const [openAccount, setOpenAccount] = useState(false)
   const [openCard, setOpenCard] = useState(false)
   const player = useAppState((s) => s.player)
@@ -36,6 +40,7 @@ export function App(): JSX.Element {
     return Object.fromEntries(entries) as Record<string, string>
   }, [])
 
+
   // Poll GameManager for current run info to show in Stats panel
   useEffect(() => {
     let t: number | null = null
@@ -48,9 +53,14 @@ export function App(): JSX.Element {
       let duration = '—'
       if (startMs) {
         const secs = Math.max(0, Math.floor((Date.now() - startMs) / 1000))
-        const mm = Math.floor(secs / 60).toString().padStart(2, '0')
-        const ss = (secs % 60).toString().padStart(2, '0')
-        duration = `${mm}:${ss}`
+        const hh = Math.floor(secs / 3600)
+        const mm = Math.floor((secs % 3600) / 60)
+        const ss = secs % 60
+        if (hh > 0) {
+          duration = `${hh}:${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+        } else {
+          duration = `${mm.toString().padStart(2, '0')}:${ss.toString().padStart(2, '0')}`
+        }
       }
       // progress
       const prog = gameManager.getBiomeProgress()
@@ -70,13 +80,64 @@ export function App(): JSX.Element {
     ;(async () => {
       const { data } = await supabase.auth.getUser()
       setEmail(data.user?.email ?? '')
+      // Load profile for level/deaths etc.
+      const p = await fetchMyProfile()
+      setProfile(p)
       const sub = supabase.auth.onAuthStateChange((_ev, session) => {
         setEmail(session?.user?.email ?? '')
+        // refetch profile on auth change
+        fetchMyProfile().then(setProfile).catch(() => setProfile(null))
       })
       unsub = () => sub.data.subscription.unsubscribe()
     })()
     return () => {
       if (unsub) unsub()
+    }
+  }, [])
+
+  // Live-update profile when game awards XP/deaths
+  useEffect(() => {
+    const onProfileChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { level?: number; xp?: number } | undefined
+      setProfile((prev) => prev ? ({ ...prev, level: detail?.level ?? prev.level, xp: detail?.xp ?? prev.xp }) : prev)
+      // Ensure sync with server in case of rounding or multiple level-ups
+      fetchMyProfile().then((p) => { if (p) setProfile(p) }).catch(() => {})
+    }
+    window.addEventListener('profile:changed', onProfileChanged as EventListener)
+    return () => window.removeEventListener('profile:changed', onProfileChanged as EventListener)
+  }, [])
+
+  useEffect(() => {
+    const has = (history as any).scrollRestoration != null
+    const prev = has ? (history as any).scrollRestoration : undefined
+    if (has) (history as any).scrollRestoration = 'manual'
+    window.scrollTo(0, 0)
+    return () => { if (has) (history as any).scrollRestoration = prev }
+  }, [])
+
+  // Guard against delayed scroll jumps: lock scroll until GameScene reports ready
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflowY
+    document.body.style.overflowY = 'hidden'
+    const keepTop = () => { window.scrollTo({ top: 0, left: 0, behavior: 'auto' }) }
+    // Prevent any scroll attempts during boot
+    window.addEventListener('scroll', keepTop, { passive: true })
+    keepTop()
+    const releaseNow = () => {
+      // small delay after ready to absorb any late layout shifts
+      window.setTimeout(() => {
+        window.removeEventListener('scroll', keepTop)
+        document.body.style.overflowY = prevOverflow
+        keepTop()
+      }, 250)
+    }
+    window.addEventListener('game:scene-ready', releaseNow)
+    const t = window.setTimeout(releaseNow, 7000) // safety fallback
+    return () => {
+      window.removeEventListener('game:scene-ready', releaseNow)
+      window.clearTimeout(t)
+      window.removeEventListener('scroll', keepTop)
+      document.body.style.overflowY = prevOverflow
     }
   }, [])
 
@@ -109,6 +170,26 @@ export function App(): JSX.Element {
     const first = name[0]?.toUpperCase() ?? 'U'
     return first
   }, [player.username, email])
+
+  // Stats: base vs effective from level and equipped loadout
+  const level = profile?.level ?? 1
+  const loadoutItems = useMemo<ItemInstance[]>(() => (
+    Object.entries(loadout).map(([id, stacks]) => ({ id, stacks }))
+  ), [loadout])
+  const baseStats = useMemo(() => computeBaseStats(level), [level])
+  const effStats = useMemo(() => buildEffectiveStats(level, loadoutItems), [level, loadoutItems])
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+
+  // Small polish: animate effective stat cell briefly when values change
+  const [bump, setBump] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    const keys = ['maxHp','damage','accuracy','dodge','projectileCount','shield','lifestealPct','dotDmgPct'] as const
+    const next: Record<string, boolean> = {}
+    keys.forEach(k => { next[k] = true })
+    setBump(next)
+    const t = window.setTimeout(() => setBump({}), 300)
+    return () => window.clearTimeout(t)
+  }, [effStats.maxHp, effStats.damage, effStats.accuracy, effStats.dodge, effStats.projectileCount, effStats.shield, effStats.lifestealPct, effStats.dotDmgPct])
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: '48px 1fr auto', minHeight: '100vh', background: '#0b0e1a', color: '#e5e7ff', fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -203,8 +284,78 @@ export function App(): JSX.Element {
               </div>
             </div>
             <div style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 14, marginBottom: 8 }}><strong>Navigation</strong></div>
-              <div style={{ fontSize: 12, color: '#9db0ff' }}>More coming soon</div>
+              <div style={{ fontSize: 14, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <strong>Stats</strong>
+                <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+                  <div title="Effective Max HP" style={{ padding: '2px 6px', borderRadius: 6, background: '#111842', border: '1px solid #3a428a', fontSize: 11, color: '#e5e7ff' }}>HP {effStats.maxHp}</div>
+                  <div title="Effective Damage" style={{ padding: '2px 6px', borderRadius: 6, background: '#111842', border: '1px solid #3a428a', fontSize: 11, color: '#e5e7ff' }}>DMG {effStats.damage}</div>
+                  <div title="Effective Accuracy" style={{ padding: '2px 6px', borderRadius: 6, background: '#111842', border: '1px solid #3a428a', fontSize: 11, color: '#e5e7ff' }}>ACC {pct(effStats.accuracy)}</div>
+                </div>
+              </div>
+              {(() => {
+                const curXp = profile?.xp ?? 0
+                const need = Math.max(1, Math.floor(50 * Math.pow(level, 1.5)))
+                const xpPct = Math.max(0, Math.min(100, Math.round((curXp / need) * 100)))
+                return (
+                  <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ padding: '2px 8px', borderRadius: 999, background: '#111842', border: '1px solid #3a428a', fontSize: 12, color: '#e5e7ff' }}>Level {level}</div>
+                      <div style={{ fontSize: 12, color: '#9db0ff' }}>XP {curXp} / {need}</div>
+                    </div>
+                    <div style={{ width: '100%', height: 8, borderRadius: 6, background: '#12173a', border: '1px solid #1f2447', overflow: 'hidden' }}>
+                      <div style={{ width: `${xpPct}%`, height: '100%', background: '#6aa6ff' }} />
+                    </div>
+                  </div>
+                )
+              })()}
+              {(() => {
+                const rowStyle = { display: 'contents' } as const
+                const headerStyle = { color: '#9db0ff' }
+                const labelStyle = { color: '#b3c0ff' }
+                const valStyle = { color: '#e5e7ff' }
+                const deltaStyle = (d: number) => ({ color: d > 0 ? '#22c55e' : d < 0 ? '#ef4444' : '#9db0ff' })
+                const fmtInt = (v: number) => `${Math.round(v)}`
+                const fmtPct = (v: number) => `${Math.round(v * 100)}%`
+                const fmtMult = (v: number) => `${v.toFixed(2)}x`
+                const arrow = (d: number) => (d > 0 ? '↑' : d < 0 ? '↓' : '→')
+                const row = (label: string, base: number, eff: number, kind: 'int'|'pct'|'mult', key?: string) => {
+                  const fmt = kind === 'int' ? fmtInt : kind === 'pct' ? fmtPct : fmtMult
+                  const delta = eff - base
+                  const ratio = base !== 0 ? eff / base : (eff >= base ? 1 : -1)
+                  const deltaText = kind === 'mult' ? fmtMult(ratio) : (kind === 'pct' ? `${Math.round((eff - base) * 100)}%` : (delta >= 0 ? `+${fmtInt(delta)}` : `${fmtInt(delta)}`))
+                  const tip = `Base: ${fmt(base)}\nEffective: ${fmt(eff)}\nDelta: ${deltaText}`
+                  return (
+                    <div style={rowStyle} key={label}>
+                      <div style={labelStyle as React.CSSProperties} title={tip}>{label}</div>
+                      <div style={valStyle as React.CSSProperties} title={tip}>{fmt(base)}</div>
+                      <div style={{ ...valStyle as React.CSSProperties, transition: 'transform 120ms ease, color 160ms ease', transform: key && bump[key] ? 'scale(1.06)' : 'scale(1.0)' }} title={tip}>
+                        {fmt(eff)}
+                        {delta !== 0 && (
+                          <span style={{ marginLeft: 8, fontWeight: 600, ...(deltaStyle(delta) as object) }} title={tip}>
+                            {arrow(delta)} {deltaText}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                }
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr', rowGap: 6, columnGap: 10, fontSize: 12 }}>
+                    <div style={headerStyle}>Stat</div>
+                    <div style={headerStyle}>Base</div>
+                    <div style={headerStyle}>Effective</div>
+                    <div style={{ height: 1, background: '#1f2447', gridColumn: '1 / -1', margin: '4px 0' }} />
+                    {row('Max HP', baseStats.maxHp, effStats.maxHp, 'int', 'maxHp')}
+                    {row('Damage', baseStats.damage, effStats.damage, 'int', 'damage')}
+                    {row('Accuracy', baseStats.accuracy, effStats.accuracy, 'pct', 'accuracy')}
+                    {row('Dodge', baseStats.dodge, effStats.dodge, 'pct', 'dodge')}
+                    {row('Projectiles', baseStats.projectileCount, effStats.projectileCount, 'int', 'projectileCount')}
+                    {row('Shield', baseStats.shield, effStats.shield, 'int', 'shield')}
+                    {row('Lifesteal', baseStats.lifestealPct, effStats.lifestealPct, 'pct', 'lifestealPct')}
+                    {row('DoT Mult', baseStats.dotDmgPct, effStats.dotDmgPct, 'mult', 'dotDmgPct')}
+                  </div>
+                )
+              })()}
             </div>
             <div style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, padding: 12 }}>
               <div style={{ fontSize: 14, marginBottom: 8 }}><strong>Summary</strong></div>
@@ -368,17 +519,18 @@ export function App(): JSX.Element {
       </div>
       <footer style={{ background: '#0f1122', borderTop: '1px solid #1f2447', padding: '16px 12px' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
-          <a href="#contact" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Contact</a>
-          <a href="#faq" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>FAQ</a>
-          <a href="#sitemap" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Sitemap</a>
-          <a href="#terms" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Terms & Conditions</a>
-          <a href="#privacy" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Privacy</a>
+          <a href="/faq.html" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>FAQ</a>
+          <a href="/contact.html" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Contact</a>
+          <a href="/terms.html" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Terms & Conditions</a>
+          <a href="/privacy.html" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Privacy</a>
+          <a href="/sitemap.html" style={{ color: '#b3c0ff', textDecoration: 'none', fontSize: 12 }}>Sitemap</a>
           <div style={{ marginLeft: 'auto', fontSize: 12, color: '#91a0ff' }}>© {new Date().getFullYear()} Swap MMO</div>
         </div>
       </footer>
       <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />
       <UsernameModal open={Boolean(needUsername)} />
+
 
       {/* Item info modal */}
       {itemModalId && (

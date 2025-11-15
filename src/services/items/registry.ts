@@ -7,6 +7,7 @@ const luckyClover: ItemDefinition = {
   description: 'Slightly increases crit and hit chance. Stacks additively.',
   rarity: 'common',
   imageKey: 'lucky-clover',
+  statModifiers: { add: { accuracy: 0.01 } },
   onComputeHitChance(_ctx, _attacker, _defender) {
     return { addCritChance: 0.01, addHitChance: 0.01 }
   },
@@ -67,6 +68,7 @@ const gasherTooth: ItemDefinition = {
   description: 'Increases damage slightly; higher crit damage.',
   rarity: 'uncommon',
   imageKey: 'gasher-tooth',
+  statModifiers: { mult: { damage: 1.06 } },
   onComputeDamage() { return { multDamage: 1.06 } }
 }
 
@@ -76,6 +78,7 @@ const godbornBooties: ItemDefinition = {
   description: 'Move like the wind. Slightly increases dodge and speed.',
   rarity: 'rare',
   imageKey: 'godborn-booties',
+  statModifiers: { add: { dodge: 0.02 }, mult: { damage: 1.03 } },
   onComputeHitChance() { return { addDodgeChance: 0.02 } },
   onComputeDamage() { return { multDamage: 1.03 } }
 }
@@ -86,6 +89,7 @@ const godbornHelm: ItemDefinition = {
   description: 'Protects the bearer. Slightly increases block and max HP.',
   rarity: 'rare',
   imageKey: 'godborn-helm',
+  statModifiers: { add: { maxHp: 5 } },
   onComputeHitChance() { return { addBlockChance: 0.02 } },
   onReceiveDamage(_ctx, defender, _attacker, amount) { defender.hp = Math.max(0, defender.hp - Math.max(0, amount - 2)) }
 }
@@ -123,6 +127,7 @@ const ringOfMar: ItemDefinition = {
   description: 'Increases lifesteal slightly.',
   rarity: 'uncommon',
   imageKey: 'ring-of-mar',
+  statModifiers: { add: { lifestealPct: 0.02 } },
   onAfterHit(_ctx, attacker, _defender, dealt) { if (attacker.kind === 'player') attacker.hp = Math.min(attacker.maxHp, attacker.hp + Math.max(0, Math.floor(dealt * 0.05))) }
 }
 
@@ -132,6 +137,7 @@ const ringOfPower: ItemDefinition = {
   description: 'Moderately increases damage.',
   rarity: 'rare',
   imageKey: 'ring-of-power',
+  statModifiers: { mult: { damage: 1.12 } },
   onComputeDamage() { return { multDamage: 1.12 } }
 }
 

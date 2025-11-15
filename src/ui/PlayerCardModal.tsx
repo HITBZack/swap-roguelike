@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { fetchMyProfile, fetchProfileById, updateMyAbout, updateMyTitles } from '../lib/profile'
 import { getFriendshipStatus, sendFriendRequest, acceptFriendRequest, denyFriendRequest } from '../lib/friends'
 import type { ProfileDTO } from '../lib/profile'
+import { listInventory } from '../services/Inventory'
 
 export interface PlayerCardModalProps {
   open: boolean
@@ -25,6 +26,7 @@ export function PlayerCardModal({ open, onClose, username, email, avatarUrl, use
   const titleOptions = useMemo(() => ['Noob', 'buying gf', 'Goblin Slayer'], [])
   const aboutMax = 300
   const [friendStatus, setFriendStatus] = useState<'none' | 'pending_sent' | 'pending_received' | 'accepted'>('none')
+  const [itemsOwned, setItemsOwned] = useState<number | null>(null)
 
   const initials = useMemo(() => {
     const base = username || email
@@ -50,6 +52,18 @@ export function PlayerCardModal({ open, onClose, username, email, avatarUrl, use
       if (mounted && !isSelf && target?.id) {
         const st = await getFriendshipStatus(target.id)
         if (st) setFriendStatus(st)
+      }
+      // Items owned only for self (we cannot read others' inventory)
+      if (mounted && isSelf) {
+        try {
+          const inv = await listInventory()
+          const total = inv.reduce((acc, it) => acc + (it.stacks ?? 0), 0)
+          setItemsOwned(total)
+        } catch {
+          setItemsOwned(null)
+        }
+      } else {
+        setItemsOwned(null)
       }
     })()
     return () => { mounted = false }
@@ -170,11 +184,11 @@ export function PlayerCardModal({ open, onClose, username, email, avatarUrl, use
                 </div>
                 <div style={{ padding: 10, border: '1px solid #2a2f55', borderRadius: 8, background: '#101531' }}>
                   <div style={{ color: '#9db0ff' }}>Deaths</div>
-                  <div style={{ fontSize: 18 }}>{profile?.times_died ?? 0}</div>
+                  <div style={{ fontSize: 18 }}>{profile?.deaths ?? 0}</div>
                 </div>
                 <div style={{ padding: 10, border: '1px solid #2a2f55', borderRadius: 8, background: '#101531' }}>
-                  <div style={{ color: '#9db0ff' }}>—</div>
-                  <div style={{ fontSize: 18 }}>—</div>
+                  <div style={{ color: '#9db0ff' }}>Items Owned</div>
+                  <div style={{ fontSize: 18 }}>{itemsOwned != null ? itemsOwned : '—'}</div>
                 </div>
                 <div style={{ padding: 10, border: '1px solid #2a2f55', borderRadius: 8, background: '#101531' }}>
                   <div style={{ color: '#9db0ff' }}>—</div>

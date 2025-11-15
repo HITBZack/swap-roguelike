@@ -87,6 +87,7 @@ export interface ItemDefinition extends ItemEffectHooks {
   description: string
   rarity: Rarity
   imageKey?: string
+  statModifiers?: StatModifiers
 }
 
 export interface ItemInstance {
@@ -95,3 +96,10 @@ export interface ItemInstance {
 }
 
 export type ItemRegistryMap = Map<ItemId, ItemDefinition>
+
+// Player stat modifier profile (data-driven Option A)
+export type StatKey = 'maxHp' | 'damage' | 'accuracy' | 'dodge' | 'projectileCount' | 'shield' | 'lifestealPct' | 'dotDmgPct'
+export type StatModifiers = {
+  add?: Partial<Record<StatKey, number>>
+  mult?: Partial<Record<StatKey, number>> // e.g., { damage: 1.15 } for +15%
+}

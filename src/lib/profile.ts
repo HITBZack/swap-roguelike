@@ -5,11 +5,12 @@ export interface ProfileDTO {
   username: string | null
   avatar_url: string | null
   level: number
+  xp?: number | null
   last_active: string
   about?: string | null
   title?: string | null
   showcase_items?: string[] | null
-  times_died?: number | null
+  deaths?: number | null
   equipped_titles?: string[] | null
 }
 
@@ -26,6 +27,40 @@ export async function fetchProfileById(userId: string): Promise<ProfileDTO | nul
     return null
   }
   return data as unknown as ProfileDTO
+}
+
+/**
+ * Add XP to the current user via RPC (auto-level handled server-side).
+ */
+export async function addMyXp(amount: number): Promise<{ level: number; xp: number } | null> {
+  const { data: auth } = await supabase.auth.getUser()
+  const uid = auth.user?.id
+  if (!uid || !Number.isFinite(amount) || amount <= 0) return null
+  const { data, error } = await supabase.rpc('profile_add_xp', { p_user: uid, p_xp: Math.floor(amount) })
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('addMyXp error', error)
+    return null
+  }
+  const row: any = Array.isArray(data) ? data[0] : data
+  if (!row) return null
+  return { level: Number(row.level ?? 1), xp: Number(row.xp ?? 0) }
+}
+
+/**
+ * Increment deaths counter for the current user via RPC.
+ */
+export async function incMyDeaths(by = 1): Promise<number | null> {
+  const { data: auth } = await supabase.auth.getUser()
+  const uid = auth.user?.id
+  if (!uid || !Number.isFinite(by) || by <= 0) return null
+  const { data, error } = await supabase.rpc('profile_inc_deaths', { p_user: uid, p_by: Math.floor(by) })
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('incMyDeaths error', error)
+    return null
+  }
+  return data as number
 }
 
 

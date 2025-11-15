@@ -187,7 +187,8 @@ const baseChoices: ChoiceOption[] = [
       const items = cloneRunItems(runItems)
       const log: string[] = []
       const n = int(rng, 1, 2)
-      const picks = pickRandomRegistryItemId(rng, n) as string[]
+      const raw = pickRandomRegistryItemId(rng, n)
+      const picks = Array.isArray(raw) ? raw : [raw]
       for (const pid of picks) items.push({ id: pid, stacks: 1 })
       log.push(`You open the cache and find ${n} item(s).`)
       return { log, updatedRunItems: items, poorDelta: 0 }

@@ -3,6 +3,8 @@ import type { ItemInstance } from './items/types'
 import { ItemsEngine } from './items/engine'
 import { itemRegistry } from './items/registry'
 import type { BattleContext, ActorState, BattleOutcome } from './items/types'
+import { buildEffectiveStats } from './player/Stats'
+import { useAppState } from '../lib/state'
 
 export type BattleResult = {
   outcome: 'win' | 'loss'
@@ -10,18 +12,22 @@ export type BattleResult = {
   enemiesKilled: number
 }
 
-export async function runSingleCombat(runSeed: string, stageNumber: number, items: ItemInstance[]): Promise<BattleResult> {
+type CombatOptions = { enemyBlessed?: boolean }
+
+export async function runSingleCombat(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}`)
 
+  const level = useAppState.getState().player.level ?? 1
+  const pst = buildEffectiveStats(level, items)
   const player: ActorState = {
     kind: 'player',
-    hp: 30,
-    maxHp: 30,
-    atk: 7,
+    hp: pst.maxHp,
+    maxHp: pst.maxHp,
+    atk: pst.damage,
     def: 2,
     critChance: 0.1,
     critMult: 1.5,
-    dodgeChance: 0.05,
+    dodgeChance: pst.dodge,
     blockChance: 0.03,
     statuses: {}
   }
@@ -38,6 +44,11 @@ export async function runSingleCombat(runSeed: string, stageNumber: number, item
     blockChance: 0.02,
     statuses: {}
   }
+  if (options.enemyBlessed) {
+    enemy.hp = Math.floor(enemy.hp * 3)
+    enemy.atk = Math.floor(enemy.atk * 3)
+    enemy.def = Math.floor(Math.max(1, enemy.def * 3))
+  }
 
   const ctx: BattleContext = { rng, player, enemies: [enemy], time: 0 }
   const engine = new ItemsEngine(itemRegistry, items)
@@ -50,7 +61,7 @@ export async function runSingleCombat(runSeed: string, stageNumber: number, item
   let outcome: BattleOutcome = 'ongoing'
 
   function resolveHit(attacker: ActorState, defender: ActorState) {
-    const baseHit = 0.8
+    const baseHit = attacker.kind === 'player' ? Math.max(0.5, Math.min(0.99, pst.accuracy)) : 0.8
     const mods = engine.computeHitChance(ctx, attacker, defender)
     const hitChance = Math.max(0, Math.min(1, baseHit + mods.addHitChance - (defender.dodgeChance + mods.addDodgeChance + defender.blockChance + mods.addBlockChance)))
     const critChance = Math.max(0, Math.min(1, attacker.critChance + mods.addCritChance))
@@ -111,12 +122,14 @@ export async function runSingleCombat(runSeed: string, stageNumber: number, item
   return { outcome: outcome === 'win' ? 'win' : 'loss', log, enemiesKilled }
 }
 
-export async function runMultiCombat(runSeed: string, stageNumber: number, items: ItemInstance[]): Promise<BattleResult> {
+export async function runMultiCombat(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}|multi`)
 
+  const level = useAppState.getState().player.level ?? 1
+  const pst = buildEffectiveStats(level, items)
   const player: ActorState = {
-    kind: 'player', hp: 34, maxHp: 34, atk: 7, def: 2,
-    critChance: 0.1, critMult: 1.5, dodgeChance: 0.06, blockChance: 0.03, statuses: {}
+    kind: 'player', hp: pst.maxHp, maxHp: pst.maxHp, atk: pst.damage, def: 2,
+    critChance: 0.1, critMult: 1.5, dodgeChance: pst.dodge, blockChance: 0.03, statuses: {}
   }
 
   // 2-4 enemies
@@ -125,6 +138,13 @@ export async function runMultiCombat(runSeed: string, stageNumber: number, items
     kind: 'enemy', hp: int(rng, 10, 18), maxHp: 999, atk: 4, def: 1,
     critChance: 0.04, critMult: 1.4, dodgeChance: 0.04, blockChance: 0.02, statuses: {}
   }))
+  if (options.enemyBlessed) {
+    for (const e of enemies) {
+      e.hp = Math.floor(e.hp * 3)
+      e.atk = Math.floor(e.atk * 3)
+      e.def = Math.floor(Math.max(1, e.def * 3))
+    }
+  }
 
   const ctx: BattleContext = { rng, player, enemies, time: 0 }
   const engine = new ItemsEngine(itemRegistry, items)
@@ -201,17 +221,24 @@ export async function runMultiCombat(runSeed: string, stageNumber: number, items
   return { outcome: outcome === 'win' ? 'win' : 'loss', log, enemiesKilled }
 }
 
-export async function runMiniBoss(runSeed: string, stageNumber: number, items: ItemInstance[]): Promise<BattleResult> {
+export async function runMiniBoss(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}|miniboss`)
 
+  const level = useAppState.getState().player.level ?? 1
+  const pst = buildEffectiveStats(level, items)
   const player: ActorState = {
-    kind: 'player', hp: 36, maxHp: 36, atk: 8, def: 2,
-    critChance: 0.12, critMult: 1.6, dodgeChance: 0.06, blockChance: 0.04, statuses: {}
+    kind: 'player', hp: pst.maxHp, maxHp: pst.maxHp, atk: pst.damage, def: 2,
+    critChance: 0.12, critMult: 1.6, dodgeChance: pst.dodge, blockChance: 0.04, statuses: {}
   }
 
   const boss: ActorState = {
     kind: 'enemy', hp: int(rng, 40, 55), maxHp: 999, atk: 7, def: 2,
     critChance: 0.06, critMult: 1.5, dodgeChance: 0.03, blockChance: 0.04, statuses: {}
+  }
+  if (options.enemyBlessed) {
+    boss.hp = Math.floor(boss.hp * 3)
+    boss.atk = Math.floor(boss.atk * 3)
+    boss.def = Math.floor(Math.max(1, boss.def * 3))
   }
 
   const ctx: BattleContext = { rng, player, enemies: [boss], time: 0 }
@@ -223,7 +250,7 @@ export async function runMiniBoss(runSeed: string, stageNumber: number, items: I
   const maxTicks = 200
 
   function resolveHit(attacker: ActorState, defender: ActorState) {
-    const baseHit = 0.78
+    const baseHit = attacker.kind === 'player' ? Math.max(0.5, Math.min(0.99, pst.accuracy)) : 0.78
     const mods = engine.computeHitChance(ctx, attacker, defender)
     const hitChance = Math.max(0, Math.min(1, baseHit + mods.addHitChance - (defender.dodgeChance + mods.addDodgeChance + defender.blockChance + mods.addBlockChance)))
     const critChance = Math.max(0, Math.min(1, attacker.critChance + mods.addCritChance))

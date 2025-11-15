@@ -8,6 +8,7 @@ import { gameManager } from '../services/GameManager'
 import type { StagePlan } from '../services/GameManager'
 import { runSingleCombat, runMultiCombat, runMiniBoss } from '../services/BattleManager'
 import { completeRunAndMaybeReward } from '../services/RunRewards'
+import { addMyXp, incMyDeaths } from '../lib/profile'
 import { itemRegistry } from '../services/items/registry'
 import { getEnemiesFor } from '../services/enemies/registry'
 import { recordBattleStats, recordChoiceStats } from '../services/RunStats'
@@ -70,6 +71,11 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     const centerX = this.cameras.main.width / 2
     const centerY = this.cameras.main.height / 4
+
+    // Notify host UI that the scene is ready to display (hide loading overlay)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('game:scene-ready'))
+    }
 
     ;(async () => {
       // Start or resume a run (seeded)
@@ -145,6 +151,11 @@ export class GameScene extends Phaser.Scene {
       this.add.rectangle(12, 12, itemsW, itemsH, 0x0f1226, 0.8).setOrigin(0)
       this.add.rectangle(12, 12, itemsW, itemsH).setStrokeStyle(1, 0x2a2f55).setOrigin(0)
       itemsTitle.setDepth(1)
+      // Compact expand control near title (kept away from pager)
+      const expandBtn = this.add.text(itemsTitle.x + itemsTitle.displayWidth + 6, 16, '⛶', { fontFamily: 'sans-serif', fontSize: '12px', color: '#9db0ff' })
+        .setOrigin(0, 0)
+        .setInteractive({ useHandCursor: true })
+      expandBtn.on('pointerdown', () => openItemsModal())
 
       function summarizeItems(list: { id: string; stacks: number }[]): Array<{ id: string; count: number }> {
         const map = new Map<string, number>()
@@ -158,6 +169,18 @@ export class GameScene extends Phaser.Scene {
       const tileSize = 36
       const gap = 6
       const cols = 3
+      // Compute visible rows based on panel height (minus title area)
+      const itemsAreaH = Math.max(0, itemsH - 28)
+      const rowsVisible = Math.max(1, Math.floor((itemsAreaH + gap) / (tileSize + gap)))
+      let pageIndex = 0
+
+      // Mask to keep items contained within panel border
+      const maskGraphics = this.add.graphics()
+      maskGraphics.fillStyle(0xffffff, 1)
+      maskGraphics.fillRect(12, 36, itemsW, itemsAreaH)
+      maskGraphics.setVisible(false)
+      const geomMask = maskGraphics.createGeometryMask()
+      itemsGroup.setMask(geomMask)
       function resolveItemImgKey(id: string): string | null {
         const def = itemRegistry.get(id)
         const tryKeys: string[] = []
@@ -173,13 +196,18 @@ export class GameScene extends Phaser.Scene {
         const effective = summarizeItems(gameManager.getEffectiveRunItems())
         const raw = summarizeItems(gameManager.getRunItems())
         const blessedSet = new Set(gameManager.getBlessedItems())
-        if (effective.length === 0) {
+        const pageSize = cols * rowsVisible
+        const totalPages = Math.max(1, Math.ceil(effective.length / pageSize))
+        pageIndex = Math.min(Math.max(0, pageIndex), totalPages - 1)
+        const start = pageIndex * pageSize
+        const slice = effective.slice(start, start + pageSize)
+        if (slice.length === 0) {
           itemsGroup.add(
             that.add.text(4, 0, 'None', { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff' })
           )
           return
         }
-        effective.forEach((rec, idx) => {
+        slice.forEach((rec, idx) => {
           const r = Math.floor(idx / cols)
           const c = idx % cols
           const x = 4 + c * (tileSize + gap)
@@ -218,16 +246,45 @@ export class GameScene extends Phaser.Scene {
               itemsGroup.add(dot)
             }
           }
+          // Click to open expanded modal with this item pre-selected
+          const tileHit = that.add.zone(x, y, tileSize, tileSize).setOrigin(0).setInteractive({ useHandCursor: true })
+          tileHit.on('pointerup', () => openItemsModal(rec.id))
+          itemsGroup.add(tileHit)
         })
       }
       const that = this
+      function getTotalPages(): number {
+        const effective = summarizeItems(gameManager.getEffectiveRunItems())
+        const pageSize = cols * rowsVisible
+        return Math.max(1, Math.ceil(effective.length / pageSize))
+      }
+
+      // Pager controls (up/down) inside the panel on the right edge
+      const upBtn = this.add.text(12 + itemsW - 10, 16 + 4, '▲', { fontFamily: 'sans-serif', fontSize: '10px', color: '#9db0ff' }).setOrigin(1, 0).setInteractive({ useHandCursor: true })
+      const downBtn = this.add.text(12 + itemsW - 10, 12 + itemsH - 14, '▼', { fontFamily: 'sans-serif', fontSize: '10px', color: '#9db0ff' }).setOrigin(1, 1).setInteractive({ useHandCursor: true })
+      upBtn.on('pointerdown', () => {
+        if (pageIndex > 0) { pageIndex -= 1; renderItemsPanel(); updatePager(getTotalPages()) }
+      })
+      downBtn.on('pointerdown', () => {
+        const all = summarizeItems(gameManager.getEffectiveRunItems())
+        const pageSize = cols * rowsVisible
+        const totalPages = Math.max(1, Math.ceil(all.length / pageSize))
+        if (pageIndex < totalPages - 1) { pageIndex += 1; renderItemsPanel(); updatePager(totalPages) }
+      })
+      function updatePager(totalPages: number): void {
+        const canUp = pageIndex > 0
+        const canDown = pageIndex < totalPages - 1
+        upBtn.setAlpha(canUp ? 1 : 0.35).setInteractive(canUp)
+        downBtn.setAlpha(canDown ? 1 : 0.35).setInteractive(canDown)
+      }
+
+      // Initial render after pager exists
       renderItemsPanel()
+      updatePager(getTotalPages())
 
-      // Expand button to open modal of run items (readonly)
-      const expand = this.add.text(12 + itemsW - 8, 16, 'Expand', { fontFamily: 'sans-serif', fontSize: '11px', color: '#9db0ff' }).setOrigin(1, 0).setInteractive({ useHandCursor: true })
-      expand.on('pointerdown', () => openItemsModal())
+      // (Expand control moved next to the title)
 
-      function openItemsModal(): void {
+      function openItemsModal(preselectId?: string): void {
         const camW = that.cameras.main.width
         const camH = that.cameras.main.height
         const overlay = that.add.rectangle(0, 0, camW, camH, 0x000000, 0.5).setOrigin(0).setInteractive().setDepth(1000)
@@ -237,56 +294,137 @@ export class GameScene extends Phaser.Scene {
         panel.setStrokeStyle(1, 0x2a2f55)
         const title = that.add.text(panel.x - w / 2 + 12, panel.y - h / 2 + 8, 'Run Items', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' }).setDepth(1002)
         const close = that.add.text(panel.x + w / 2 - 12, panel.y - h / 2 + 8, '✕', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).setDepth(1002)
-        const grid = that.add.container(panel.x - w / 2 + 12, panel.y - h / 2 + 34).setDepth(1002)
+        const gridX = panel.x - w / 2 + 12
+        const gridY = panel.y - h / 2 + 34
+        const gridW = w - 24
+        const gridH = Math.max(120, h - 34 - 48)
+        const grid = that.add.container(gridX, gridY).setDepth(1002)
         const info = that.add.text(panel.x - w / 2 + 12, panel.y + h / 2 - 20, 'Click an item for details', { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff' }).setOrigin(0, 1).setDepth(1002)
         const blessedSet = new Set(gameManager.getBlessedItems())
         const data = summarizeItems(gameManager.getEffectiveRunItems())
         const M = 6
         const T = 48
-        const C = Math.max(4, Math.floor((w - 24) / (T + M)))
-        data.forEach((rec, idx) => {
-          const r = Math.floor(idx / C)
-          const c = idx % C
-          const x = c * (T + M)
-          const y = r * (T + M)
-          const box = that.add.rectangle(x, y, T, T, 0x0b0e1a, 1).setOrigin(0).setDepth(1002)
-          box.setStrokeStyle(1, 0x2a2f55)
-          grid.add(box)
-          const def = itemRegistry.get(rec.id)
-          const imgKey = resolveItemImgKey(rec.id)
-          if (imgKey && that.textures.exists(imgKey)) {
-            const img = that.add.image(x + T / 2, y + T / 2, imgKey).setOrigin(0.5).setDepth(1002)
-            const max = T - 8
-            const sw = max / img.width
-            const sh = max / img.height
-            img.setScale(Math.min(sw, sh))
-            grid.add(img)
-          } else {
-            const label = (def?.name ?? rec.id).slice(0, 2).toUpperCase()
-            const txt = that.add.text(x + T / 2, y + T / 2, label, { fontFamily: 'monospace', fontSize: '12px', color: '#e5e7ff' }).setOrigin(0.5).setDepth(1002)
-            grid.add(txt)
+        const C = Math.max(4, Math.floor((gridW - 0) / (T + M)))
+        const rowsVisible = Math.max(1, Math.floor((gridH + M) / (T + M)))
+        const pageSize = C * rowsVisible
+        let pageIndexModal = 0
+        let selectedId: string | null = null
+        if (preselectId) {
+          const idx = data.findIndex(r => r.id === preselectId)
+          if (idx >= 0) {
+            selectedId = preselectId
+            pageIndexModal = Math.floor(idx / pageSize)
           }
-          const hit = that.add.zone(x, y, T, T).setOrigin(0).setInteractive().setDepth(1003)
-          hit.on('pointerdown', () => {
+        }
+
+        // Mask to clip grid contents
+        const maskG = that.add.graphics().setDepth(1002)
+        maskG.fillStyle(0xffffff, 1)
+        maskG.fillRect(gridX, gridY, gridW, gridH)
+        maskG.setVisible(false)
+        const gridMask = maskG.createGeometryMask()
+        grid.setMask(gridMask)
+
+        // Pager buttons inside modal
+        const upM = that.add.text(panel.x + w / 2 - 12, gridY + 2, '▲', { fontFamily: 'sans-serif', fontSize: '12px', color: '#9db0ff' }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).setDepth(1002)
+        const downM = that.add.text(panel.x + w / 2 - 12, gridY + gridH - 2, '▼', { fontFamily: 'sans-serif', fontSize: '12px', color: '#9db0ff' }).setOrigin(1, 1).setInteractive({ useHandCursor: true }).setDepth(1002)
+
+        function updatePagerModal(): void {
+          const totalPages = Math.max(1, Math.ceil(data.length / pageSize))
+          upM.setAlpha(pageIndexModal > 0 ? 1 : 0.35).setInteractive(pageIndexModal > 0)
+          downM.setAlpha(pageIndexModal < totalPages - 1 ? 1 : 0.35).setInteractive(pageIndexModal < totalPages - 1)
+        }
+
+        function renderModalPage(): void {
+          grid.removeAll(true)
+          const start = pageIndexModal * pageSize
+          const slice = data.slice(start, start + pageSize)
+          slice.forEach((rec, idx) => {
+            const r = Math.floor(idx / C)
+            const c = idx % C
+            const tx = c * (T + M)
+            const ty = r * (T + M)
+            const tile = that.add.container(tx, ty).setDepth(1002)
+            const isBlessed = blessedSet.has(rec.id)
+            const box = that.add.rectangle(0, 0, T, T, 0x0b0e1a, 1).setOrigin(0).setDepth(1002)
+            box.setStrokeStyle(1, 0x2a2f55)
+            tile.add(box)
+            const def = itemRegistry.get(rec.id)
+            const imgKey = resolveItemImgKey(rec.id)
+            if (imgKey && that.textures.exists(imgKey)) {
+              const img = that.add.image(T / 2, T / 2, imgKey).setOrigin(0.5).setDepth(1002)
+              const max = T - 8
+              const sw = max / img.width
+              const sh = max / img.height
+              img.setScale(Math.min(sw, sh))
+              tile.add(img)
+            } else {
+              const label = (def?.name ?? rec.id).slice(0, 2).toUpperCase()
+              const txt = that.add.text(T / 2, T / 2, label, { fontFamily: 'monospace', fontSize: '12px', color: '#e5e7ff' }).setOrigin(0.5).setDepth(1002)
+              tile.add(txt)
+            }
+            if (rec.count > 0) {
+              const badgeColor = isBlessed ? 0x6a5200 : 0x111842
+              const strokeColor = isBlessed ? 0xd4af37 : 0x3a428a
+              const textColor = isBlessed ? '#ffd166' : '#b3c0ff'
+              const badge = that.add.rectangle(T - 10, T - 10, 18, 12, badgeColor, 1).setOrigin(0.5).setDepth(1002)
+              badge.setStrokeStyle(1, strokeColor)
+              const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: textColor }).setOrigin(0.5).setDepth(1002)
+              tile.add(badge); tile.add(qty)
+            }
             const name = def?.name ?? rec.id
             const desc = def?.description ?? 'No description'
-            info.setText(`${name}  x${rec.count}\n${desc}`)
+
+            const applyStyles = (hovered: boolean, selected: boolean) => {
+              const scale = selected ? 1.08 : hovered ? 1.04 : 1.0
+              tile.setScale(scale)
+              const stroke = selected ? 0x6aa6ff : hovered ? 0x3a5fd1 : 0x2a2f55
+              box.setStrokeStyle(1, stroke)
+              const fill = selected ? 0x121a3a : hovered ? 0x0f1631 : 0x0b0e1a
+              box.fillColor = fill
+            }
+            const isSelected = selectedId === rec.id
+            applyStyles(false, isSelected)
+            if (isSelected) {
+              info.setText(`${name}  x${rec.count}\n${desc}`)
+            }
+
+            const hit = that.add.zone(0, 0, T, T).setOrigin(0).setInteractive().setDepth(1003)
+            hit.on('pointerover', () => { if (!isSelected) applyStyles(true, false) })
+            hit.on('pointerout', () => { const selected = selectedId === rec.id; applyStyles(false, selected) })
+            hit.on('pointerdown', () => { tile.setScale((isSelected ? 1.08 : 1.04) * 0.98) })
+            hit.on('pointerup', () => {
+              selectedId = rec.id
+              info.setText(`${name}  x${rec.count}\n${desc}`)
+              renderModalPage()
+              updatePagerModal()
+            })
+            tile.add(hit)
+
+            grid.add(tile)
           })
-          grid.add(hit)
-          const isBlessed = blessedSet.has(rec.id)
-          if (rec.count > 0) {
-            const badgeColor = isBlessed ? 0x6a5200 : 0x111842
-            const strokeColor = isBlessed ? 0xd4af37 : 0x3a428a
-            const textColor = isBlessed ? '#ffd166' : '#b3c0ff'
-            const badge = that.add.rectangle(x + T - 10, y + T - 10, 18, 12, badgeColor, 1).setOrigin(0.5).setDepth(1002)
-            badge.setStrokeStyle(1, strokeColor)
-            const qty = that.add.text(badge.x, badge.y, String(rec.count), { fontFamily: 'monospace', fontSize: '10px', color: textColor }).setOrigin(0.5).setDepth(1002)
-            grid.add(badge); grid.add(qty)
-          }
-        })
-        function closeAll() {
-          overlay.destroy(); panel.destroy(); title.destroy(); close.destroy(); grid.destroy(); info.destroy()
         }
+
+        upM.on('pointerdown', () => { if (pageIndexModal > 0) { pageIndexModal -= 1; renderModalPage(); updatePagerModal() } })
+        downM.on('pointerdown', () => {
+          const totalPages = Math.max(1, Math.ceil(data.length / pageSize))
+          if (pageIndexModal < totalPages - 1) { pageIndexModal += 1; renderModalPage(); updatePagerModal() }
+        })
+
+        function closeAll() {
+          overlay.destroy(); panel.destroy(); title.destroy(); close.destroy(); grid.destroy(); info.destroy(); upM.destroy(); downM.destroy(); maskG.destroy()
+        }
+        // If a selection was provided, prime info text now
+        if (selectedId) {
+          const sel = data.find(r => r.id === selectedId)
+          if (sel) {
+            const def = itemRegistry.get(sel.id)
+            const name = def?.name ?? sel.id
+            const desc = def?.description ?? 'No description'
+            info.setText(`${name}  x${sel.count}\n${desc}`)
+          }
+        }
+        renderModalPage(); updatePagerModal()
         overlay.on('pointerdown', closeAll)
         close.on('pointerdown', closeAll)
       }
@@ -334,7 +472,7 @@ export class GameScene extends Phaser.Scene {
         p.setDepth(30)
       }
 
-      // Battle log panel (collapsible) below items panel
+      // Battle Log panel
       const panelX = 12
       const panelY = 12 + itemsH + 10
       const panelW = Math.floor(itemsW)
@@ -342,58 +480,14 @@ export class GameScene extends Phaser.Scene {
       this.add.rectangle(panelX, panelY, panelW, panelH, 0x0f1226, 0.8).setOrigin(0)
       this.add.rectangle(panelX, panelY, panelW, panelH).setStrokeStyle(1, 0x2a2f55).setOrigin(0)
       this.add.text(panelX + 4, panelY + 4, 'Battle Log', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' })
-      const toggle = this.add.text(panelX + panelW - 18, panelY + 4, '▾', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' }).setInteractive({ useHandCursor: true })
+      const logTextObj = this.add.text(panelX + 4, panelY + 24, '', { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', lineSpacing: 2, wordWrap: { width: panelW - 8 } }).setOrigin(0)
 
-      let expanded = true
-      const logText = this.add.text(panelX + 4, panelY + 24, '', { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', wordWrap: { width: panelW - 8 } }).setOrigin(0)
-      // Mask to keep text inside panel area
-      const maskGfx = this.add.graphics({ x: 0, y: 0 })
-      maskGfx.fillStyle(0xffffff, 1)
-      maskGfx.fillRect(panelX + 2, panelY + 22, panelW - 4, panelH - 26)
-      const geomMask = maskGfx.createGeometryMask()
-      maskGfx.setVisible(false)
-      logText.setMask(geomMask)
-
-      // Scroll handling for the log (hover-only wheel; arrow buttons)
-      const viewHeight = panelH - 26
-      let scrollY = 0
-      let overLog = false
-      function refreshScroll() {
-        const maxScroll = Math.max(0, logText.height - viewHeight)
-        if (scrollY < 0) scrollY = 0
-        if (scrollY > maxScroll) scrollY = maxScroll
-        logText.setY(panelY + 24 - scrollY)
+      // Lightweight log buffer and on-screen log
+      let logBuffer = ''
+      function updateLog(text: string, _toBottom = true) {
+        logBuffer = text
+        logTextObj.setText(text)
       }
-      function updateLog(text: string, toBottom = true) {
-        logText.setText(text)
-        if (toBottom) {
-          scrollY = Math.max(0, logText.height - viewHeight)
-        }
-        refreshScroll()
-      }
-      const logZone = this.add.zone(panelX + 2, panelY + 22, panelW - 4, viewHeight).setOrigin(0).setInteractive()
-      logZone.on('pointerover', () => { overLog = true })
-      logZone.on('pointerout', () => { overLog = false })
-      this.input.on('wheel', (_p: any, _go: any, _dx: number, dy: number) => {
-        if (!expanded) return
-        if (!overLog) return
-        scrollY += dy * 0.5
-        refreshScroll()
-      })
-      // Up/Down arrow buttons inside panel to scroll
-      const upBtn = this.add.text(panelX + panelW - 14, panelY + 24, '▲', { fontFamily: 'sans-serif', fontSize: '10px', color: '#e5e7ff' }).setOrigin(0.5).setInteractive({ useHandCursor: true })
-      const dnBtn = this.add.text(panelX + panelW - 14, panelY + panelH - 16, '▼', { fontFamily: 'sans-serif', fontSize: '10px', color: '#e5e7ff' }).setOrigin(0.5).setInteractive({ useHandCursor: true })
-      upBtn.on('pointerdown', () => { scrollY -= 18; refreshScroll() })
-      dnBtn.on('pointerdown', () => { scrollY += 18; refreshScroll() })
-
-      function setExpanded(v: boolean) {
-        expanded = v
-        toggle.setText(v ? '▾' : '▸')
-        logText.setVisible(v)
-      }
-      setExpanded(true)
-
-      toggle.on('pointerdown', () => setExpanded(!expanded))
 
       // If this is a combat stage, gate combat behind Start Combat or auto-combat
       if (stage?.type === 'combat' && run) {
@@ -427,13 +521,13 @@ export class GameScene extends Phaser.Scene {
           startBtn.disableInteractive().setAlpha(0.6)
           let result: { outcome: 'win'|'loss'; log: string[]; enemiesKilled: number }
           if (stage.combatType === 'single') {
-            result = await runSingleCombat(run.seed, stageNumber, runItems)
+            result = await runSingleCombat(run.seed, stageNumber, runItems, { enemyBlessed: selectedEnemyIsBlessed })
           } else if (stage.combatType === 'multi') {
-            result = await runMultiCombat(run.seed, stageNumber, runItems)
+            result = await runMultiCombat(run.seed, stageNumber, runItems, { enemyBlessed: selectedEnemyIsBlessed })
           } else if (stage.combatType === 'miniboss') {
-            result = await runMiniBoss(run.seed, stageNumber, runItems)
+            result = await runMiniBoss(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed })
           } else {
-            result = await runSingleCombat(run.seed, stageNumber, runItems)
+            result = await runSingleCombat(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed })
           }
           const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
           updateLog([`Outcome: ${outcomeText}`, '', ...result.log].join('\n'))
@@ -454,7 +548,7 @@ export class GameScene extends Phaser.Scene {
                   gameManager.addBlessedItem(chosen)
                   await gameManager.persistStagePlan()
                   renderItemsPanel()
-                  const cur = logText.text ? `${logText.text}\n` : ''
+                  const cur = logBuffer ? `${logBuffer}\n` : ''
                   updateLog(cur + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
                 }
               }
@@ -463,9 +557,20 @@ export class GameScene extends Phaser.Scene {
           if (result.outcome === 'loss') {
             const livesLeft = gameManager.decrementLife()
             await gameManager.persistStagePlan()
-            const cur = logText.text ? `${logText.text}\n` : ''
-            logText.setText(cur + `You lost a life. Lives remaining: ${livesLeft}/3`)
+            const cur = logBuffer ? `${logBuffer}\n` : ''
+            updateLog(cur + `You lost a life. Lives remaining: ${livesLeft}/3`)
             if (livesLeft <= 0) {
+              // Award XP based on progress and count a death
+              try {
+                const prog = gameManager.getBiomeProgress()
+                const stageIdx = prog.stageIndex ?? 0
+                const xp = Math.max(0, 10 + stageIdx * 5)
+                const xpRes = await addMyXp(xp)
+                await incMyDeaths(1)
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                }
+              } catch {}
               await completeRunAndMaybeReward()
               gameManager.resetRun()
               this.scene.stop('GameScene'); this.scene.start('GameScene')
@@ -510,7 +615,7 @@ export class GameScene extends Phaser.Scene {
               await gameManager.persistRunItems()
             }
             if (Array.isArray(outcome.log) && outcome.log.length > 0) {
-              const cur = logText.text ? `${logText.text}\n` : ''
+              const cur = logBuffer ? `${logBuffer}\n` : ''
               updateLog(cur + outcome.log.join('\n'))
             }
             if (typeof outcome.poorDelta === 'number' && outcome.poorDelta !== 0) {
@@ -519,7 +624,7 @@ export class GameScene extends Phaser.Scene {
             if (outcome.triggerMiniboss) {
               const result = await runMiniBoss(run.seed, stageNumber, gameManager.getRunItems())
               const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
-              const cur = logText.text ? `${logText.text}\n` : ''
+              const cur = logBuffer ? `${logBuffer}\n` : ''
               updateLog(cur + [`Mini-boss Outcome: ${outcomeText}`, '', ...result.log].join('\n'))
               void recordBattleStats(result.enemiesKilled, stageNumber)
               gameManager.addEnemiesKilled(result.enemiesKilled)
@@ -527,9 +632,19 @@ export class GameScene extends Phaser.Scene {
               if (result.outcome === 'loss') {
                 const livesLeft = gameManager.decrementLife()
                 await gameManager.persistStagePlan()
-                const cur2 = logText.text ? `${logText.text}\n` : ''
-                logText.setText(cur2 + `You lost a life. Lives remaining: ${livesLeft}/3`)
+                const cur2 = logBuffer ? `${logBuffer}\n` : ''
+                updateLog(cur2 + `You lost a life. Lives remaining: ${livesLeft}/3`)
                 if (livesLeft <= 0) {
+                  try {
+                    const prog = gameManager.getBiomeProgress()
+                    const stageIdx = prog.stageIndex ?? 0
+                    const xp = Math.max(0, 10 + stageIdx * 5)
+                    const xpRes = await addMyXp(xp)
+                    await incMyDeaths(1)
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                    }
+                  } catch {}
                   await completeRunAndMaybeReward()
                   gameManager.resetRun()
                   this.scene.stop('GameScene'); this.scene.start('GameScene')
@@ -588,7 +703,7 @@ export class GameScene extends Phaser.Scene {
         const uniqueId = stage.uniqueId
         if (uniqueId === 'pedestal_duplicate') {
           const desc = "You encounter a strange pedestal in the middle of nowhere. You've heard stories that they can duplicate whatever's placed on top of them."
-          const cur = logText.text ? `${logText.text}\n` : ''
+          const cur = logBuffer ? `${logBuffer}\n` : ''
           updateLog(cur + desc)
           const emptyKey = 'enemy:empty'
           if (this.textures.exists(emptyKey)) {
@@ -603,7 +718,7 @@ export class GameScene extends Phaser.Scene {
 
           const itemsNow = gameManager.getRunItems()
           if (itemsNow.length === 0) {
-            const cur2 = logText.text ? `${logText.text}\n` : ''
+            const cur2 = logBuffer ? `${logBuffer}\n` : ''
             updateLog(cur2 + 'You have no items to duplicate.')
             makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
               await gameManager.advance()
@@ -660,7 +775,7 @@ export class GameScene extends Phaser.Scene {
                 if (delta > 0) gameManager.addItemsGained(delta)
                 renderItemsPanel()
                 await gameManager.persistRunItems()
-                const cur3 = logText.text ? `${logText.text}\n` : ''
+                const cur3 = logBuffer ? `${logBuffer}\n` : ''
                 updateLog(cur3 + `The pedestal hums. Your ${rec.id} is duplicated.`)
                 destroyModal()
                 makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
@@ -704,6 +819,15 @@ export class GameScene extends Phaser.Scene {
       const endRun = this.add.text(brX, brY - 8, 'End Run', { fontFamily: 'sans-serif', fontSize: '12px', color: '#ffffff', backgroundColor: '#8a2be2' }).setPadding(6, 4, 6, 4).setOrigin(1, 1)
       endRun.setInteractive({ useHandCursor: true })
       endRun.on('pointerdown', async () => {
+        try {
+          const prog = gameManager.getBiomeProgress()
+          const stageIdx = prog.stageIndex ?? 0
+          const xp = Math.max(0, 10 + stageIdx * 5)
+          const xpRes = await addMyXp(xp)
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+          }
+        } catch {}
         await completeRunAndMaybeReward()
         gameManager.resetRun()
         this.scene.stop('GameScene'); this.scene.start('GameScene')
