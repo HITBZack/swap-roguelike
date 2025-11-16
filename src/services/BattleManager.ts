@@ -5,6 +5,7 @@ import { itemRegistry } from './items/registry'
 import type { BattleContext, ActorState, BattleOutcome } from './items/types'
 import { buildEffectiveStats } from './player/Stats'
 import { useAppState } from '../lib/state'
+import { gameManager } from './GameManager'
 
 export type BattleResult = {
   outcome: 'win' | 'loss'
@@ -12,13 +13,17 @@ export type BattleResult = {
   enemiesKilled: number
 }
 
-type CombatOptions = { enemyBlessed?: boolean }
+type CombatOptions = { enemyBlessed?: boolean; role?: 'normal' | 'miniboss' | 'boss' }
 
 export async function runSingleCombat(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}`)
 
   const level = useAppState.getState().player.level ?? 1
   const pst = buildEffectiveStats(level, items)
+  const dmgMult = gameManager.getDamageMultiplier()
+  const hpMult = gameManager.getMaxHpMultiplier()
+  pst.maxHp = Math.max(1, Math.floor(pst.maxHp * hpMult))
+  pst.damage = Math.max(1, Math.floor(pst.damage * dmgMult))
   const player: ActorState = {
     kind: 'player',
     hp: pst.maxHp,
@@ -127,6 +132,10 @@ export async function runMultiCombat(runSeed: string, stageNumber: number, items
 
   const level = useAppState.getState().player.level ?? 1
   const pst = buildEffectiveStats(level, items)
+  const dmgMult = gameManager.getDamageMultiplier()
+  const hpMult = gameManager.getMaxHpMultiplier()
+  pst.maxHp = Math.max(1, Math.floor(pst.maxHp * hpMult))
+  pst.damage = Math.max(1, Math.floor(pst.damage * dmgMult))
   const player: ActorState = {
     kind: 'player', hp: pst.maxHp, maxHp: pst.maxHp, atk: pst.damage, def: 2,
     critChance: 0.1, critMult: 1.5, dodgeChance: pst.dodge, blockChance: 0.03, statuses: {}
@@ -226,6 +235,10 @@ export async function runMiniBoss(runSeed: string, stageNumber: number, items: I
 
   const level = useAppState.getState().player.level ?? 1
   const pst = buildEffectiveStats(level, items)
+  const dmgMult = gameManager.getDamageMultiplier()
+  const hpMult = gameManager.getMaxHpMultiplier()
+  pst.maxHp = Math.max(1, Math.floor(pst.maxHp * hpMult))
+  pst.damage = Math.max(1, Math.floor(pst.damage * dmgMult))
   const player: ActorState = {
     kind: 'player', hp: pst.maxHp, maxHp: pst.maxHp, atk: pst.damage, def: 2,
     critChance: 0.12, critMult: 1.6, dodgeChance: pst.dodge, blockChance: 0.04, statuses: {}
@@ -234,6 +247,18 @@ export async function runMiniBoss(runSeed: string, stageNumber: number, items: I
   const boss: ActorState = {
     kind: 'enemy', hp: int(rng, 40, 55), maxHp: 999, atk: 7, def: 2,
     critChance: 0.06, critMult: 1.5, dodgeChance: 0.03, blockChance: 0.04, statuses: {}
+  }
+
+  // Difficulty scaling by role: miniboss ~2x, boss ~4x
+  const role = options.role ?? 'miniboss'
+  if (role === 'miniboss') {
+    boss.hp = Math.floor(boss.hp * 2)
+    boss.atk = Math.floor(boss.atk * 2)
+    boss.def = Math.floor(Math.max(1, boss.def * 2))
+  } else if (role === 'boss') {
+    boss.hp = Math.floor(boss.hp * 4)
+    boss.atk = Math.floor(boss.atk * 4)
+    boss.def = Math.floor(Math.max(1, boss.def * 4))
   }
   if (options.enemyBlessed) {
     boss.hp = Math.floor(boss.hp * 3)

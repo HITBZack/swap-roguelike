@@ -55,18 +55,8 @@ Object.keys(enemyUrls).forEach((path) => {
   const displayName = toTitleCase(id)
   const baseStats = deriveBaseStats(id)
   const biomes = assignBiomes(id)
-  const h = hash32(id)
-  let isBoss = false
-  let isMiniboss = false
-  let isMulti = false
-  if (h % 20 === 0) {
-    isBoss = true
-  } else if (h % 10 === 0) {
-    isMiniboss = true
-  } else if (h % 4 === 0) {
-    isMulti = true
-  }
-  const tags = { isBoss, isMiniboss, isMulti, isBlessed: false }
+  // Default tags: rely on explicit overrides for boss/miniboss/multi classification.
+  const tags = { isBoss: false, isMiniboss: false, isMulti: false, isBlessed: false }
   const baseDef: EnemyDef = { id, displayName, imageKey, biomes, base: baseStats, tags }
   const ov = enemyOverrides[id]
   if (ov) {

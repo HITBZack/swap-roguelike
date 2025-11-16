@@ -57,7 +57,10 @@ export function ChatPanel({ onUserClick }: ChatPanelProps): JSX.Element {
           const state = presenceChannel.presenceState() as Record<string, Array<{ user_id: string, username: string | null, avatar_url: string | null }>>
           const flat: Record<string, { user_id: string, username: string | null, avatar_url: string | null }> = {}
           Object.values(state).forEach((arr) => {
-            arr.forEach((meta) => { flat[meta.user_id] = meta })
+            arr.forEach((meta) => {
+              if (!meta.user_id || meta.user_id === uid) return
+              flat[meta.user_id] = meta
+            })
           })
           if (mounted) setOnline(flat)
         })

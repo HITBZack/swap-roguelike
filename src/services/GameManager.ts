@@ -1,5 +1,5 @@
 import { fromSeed, pickWeighted, int } from '../lib/rng'
-import { UNIQUE_STAGE_IDS } from './UniqueCatalog'
+import { pickUniqueEventId } from './UniqueCatalog'
 import type { RNG } from '../lib/rng'
 import { createRun, fetchActiveRun, updateRunProgress, listRunItems, insertRunItems, replaceRunItems } from './RunPersistence'
 import { listLoadout } from './Inventory'
@@ -16,6 +16,10 @@ export type StagePlan = {
   uniqueId?: string
   livesRemaining?: number
   blessedItemIds?: string[]
+  attackMultiplier?: number
+  maxHpMultiplier?: number
+  bossesBlessed?: boolean
+  statusReflect?: boolean
 }
 
 export type RunDTO = {
@@ -51,6 +55,10 @@ class GameManager {
     const biomeIndex = 0
     const stageIndex = 0
     const stagePlan = this.generateStagePlan(biomeIndex, stageIndex)
+    stagePlan.attackMultiplier = 1
+    stagePlan.maxHpMultiplier = 1
+    stagePlan.bossesBlessed = false
+    stagePlan.statusReflect = false
     stagePlan.blessedItemIds = []
     stagePlan.livesRemaining = 3
     const rec = await createRun(s, biomeIndex, stageIndex, stagePlan)
@@ -90,6 +98,13 @@ class GameManager {
 
   async advance(): Promise<RunDTO | null> {
     if (!this.run || !this.rng) return null
+    const prevPlan = this.run.stagePlan
+    const prevLives = prevPlan.livesRemaining ?? 3
+    const prevBlessed = prevPlan.blessedItemIds ?? []
+     const prevAtkMult = prevPlan.attackMultiplier ?? 1
+     const prevHpMult = prevPlan.maxHpMultiplier ?? 1
+     const prevBossesBlessed = !!prevPlan.bossesBlessed
+     const prevStatusReflect = !!prevPlan.statusReflect
     let biomeIndex = this.run.biomeIndex
     let stageIndex = this.run.stageIndex + 1
     const stagesInBiome = this.biomeStageCounts[biomeIndex]
@@ -99,6 +114,12 @@ class GameManager {
       if (biomeIndex === 0) this.biomeStageCounts = this.generateBiomeCounts(this.rng)
     }
     const stagePlan = this.generateStagePlan(biomeIndex, stageIndex)
+    stagePlan.livesRemaining = prevLives
+    stagePlan.blessedItemIds = prevBlessed
+    stagePlan.attackMultiplier = prevAtkMult
+    stagePlan.maxHpMultiplier = prevHpMult
+    stagePlan.bossesBlessed = prevBossesBlessed
+    stagePlan.statusReflect = prevStatusReflect
     const updated = await updateRunProgress(this.run.id, biomeIndex, stageIndex, stagePlan)
     if (!updated) return null
     this.run = { ...this.run, biomeIndex, stageIndex, stagePlan }
@@ -205,10 +226,82 @@ class GameManager {
 
   getRunStartMs(): number | null { return this.runStartEpochMs }
 
+  getDamageMultiplier(): number {
+    return this.run?.stagePlan.attackMultiplier ?? 1
+  }
+
+  setDamageMultiplier(mult: number): void {
+    if (!this.run) return
+    this.run.stagePlan.attackMultiplier = Math.max(0, mult)
+  }
+
+  getMaxHpMultiplier(): number {
+    return this.run?.stagePlan.maxHpMultiplier ?? 1
+  }
+
+  setMaxHpMultiplier(mult: number): void {
+    if (!this.run) return
+    this.run.stagePlan.maxHpMultiplier = Math.max(0, mult)
+  }
+
+  areGlobalBossesBlessed(): boolean {
+    return !!this.run?.stagePlan.bossesBlessed
+  }
+
+  enableGlobalBlessedBosses(): void {
+    if (!this.run) return
+    this.run.stagePlan.bossesBlessed = true
+  }
+
+  hasStatusReflect(): boolean {
+    return !!this.run?.stagePlan.statusReflect
+  }
+
+  enableStatusReflect(): void {
+    if (!this.run) return
+    this.run.stagePlan.statusReflect = true
+  }
+
   getBiomeProgress(): { biomeIndex: number | null; stageIndex: number | null; totalStages: number | null } {
     if (!this.run) return { biomeIndex: null, stageIndex: null, totalStages: null }
     const total = this.biomeStageCounts[this.run.biomeIndex] ?? null
     return { biomeIndex: this.run.biomeIndex, stageIndex: this.run.stageIndex, totalStages: total }
+  }
+
+  /**
+   * Cumulative count of fully completed biomes in the current run.
+   * This increases without an upper bound and does not reset when biomeIndex wraps.
+   */
+  getBiomesCompleted(): number {
+    if (!this.run || !this.biomeStageCounts.length) return 0
+    const counts = this.biomeStageCounts
+    const totalPerCycle = counts.reduce((acc, n) => acc + (n || 0), 0)
+    if (totalPerCycle <= 0) return 0
+
+    // Stages completed so far in this run across all biomes
+    let completedStages = 0
+    for (let i = 0; i < this.run.biomeIndex; i++) {
+      completedStages += counts[i] ?? 0
+    }
+    completedStages += this.run.stageIndex
+
+    const fullCycles = Math.floor(completedStages / totalPerCycle)
+    let remainder = completedStages % totalPerCycle
+
+    // Count completed biomes within the current cycle
+    let biomesWithinCycle = 0
+    for (let i = 0; i < counts.length; i++) {
+      const span = counts[i] ?? 0
+      if (span <= 0) continue
+      if (remainder >= span) {
+        biomesWithinCycle += 1
+        remainder -= span
+      } else {
+        break
+      }
+    }
+
+    return fullCycles * this.biomes.length + biomesWithinCycle
   }
 
   isAutoCombat(): boolean { return this.autoCombat }
@@ -225,13 +318,13 @@ class GameManager {
     const isFirstBiome = biomeIndex === 0
     const type = pickWeighted<StageType>(this.rng, isFirstBiome
       ? [
-          { value: 'combat', weight: 0.72 },
-          { value: 'choice', weight: 0.28 },
+          { value: 'combat', weight: 0.75 },
+          { value: 'choice', weight: 0.25 },
         ]
       : [
-          { value: 'combat', weight: 0.65 },
-          { value: 'choice', weight: 0.25 },
-          { value: 'unique', weight: 0.10 },
+          { value: 'combat', weight: 0.71 },
+          { value: 'choice', weight: 0.21 },
+          { value: 'unique', weight: 0.08 },
         ])
     let combatType: CombatType | undefined
     let uniqueId: string | undefined
@@ -243,9 +336,8 @@ class GameManager {
         { value: 'boss', weight: 0.02 }
       ])
     } else if (type === 'unique') {
-      const pool = UNIQUE_STAGE_IDS
-      const idx = pool.length > 0 ? int(this.rng, 0, pool.length - 1) : 0
-      uniqueId = pool[idx] ?? undefined
+      const picked = pickUniqueEventId(this.rng)
+      uniqueId = picked ?? undefined
     }
     return { biomeId, index: stageIndex, type, combatType, uniqueId }
   }

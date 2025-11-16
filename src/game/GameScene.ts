@@ -3,6 +3,9 @@ import Phaser from 'phaser'
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import gameViewStructureUrl from '../assets/scene_art/Game_View_Structure.png?url'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import teacookiesUrl from '../assets/scene_art/teacookies.png?url'
 import { type AppState, useAppState } from '../lib/state'
 import { gameManager } from '../services/GameManager'
 import type { StagePlan } from '../services/GameManager'
@@ -10,10 +13,10 @@ import { runSingleCombat, runMultiCombat, runMiniBoss } from '../services/Battle
 import { completeRunAndMaybeReward } from '../services/RunRewards'
 import { addMyXp, incMyDeaths } from '../lib/profile'
 import { itemRegistry } from '../services/items/registry'
-import { getEnemiesFor } from '../services/enemies/registry'
+import { getEnemiesFor, getEnemyDefs } from '../services/enemies/registry'
 import { recordBattleStats, recordChoiceStats } from '../services/RunStats'
 import { pickChoiceOptions } from '../services/Choices'
-import { fromSeed } from '../lib/rng'
+import { fromSeed, int } from '../lib/rng'
 
 /**
  * GameScene
@@ -30,6 +33,7 @@ export class GameScene extends Phaser.Scene {
   preload(): void {
     // Frame
     this.load.image('ui:game_frame', gameViewStructureUrl)
+    this.load.image('unique:teacookies', teacookiesUrl)
 
     // Discover enemies and player models via Vite glob imports
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -80,18 +84,7 @@ export class GameScene extends Phaser.Scene {
     // Autoplay integration: allow React UI to request an automatic Next Stage when safe
     let goNextStage: (() => void) | null = null
     let canAutoAdvance = false
-    const onAutoPlayAdvance = () => {
-      if (!canAutoAdvance || !goNextStage) return
-      goNextStage()
-    }
-    if (typeof window !== 'undefined') {
-      window.addEventListener('game:autoplay-advance', onAutoPlayAdvance as EventListener)
-    }
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('game:autoplay-advance', onAutoPlayAdvance as EventListener)
-      }
-    })
+    // Note: autoplay listener now lives inside the async run block so it can see boss/log state
 
     ;(async () => {
       // Start or resume a run (seeded)
@@ -132,6 +125,7 @@ export class GameScene extends Phaser.Scene {
       let selectedEnemyImageKey: string | null = null
       let selectedEnemyName: string | null = null
       let selectedEnemyIsBlessed = false
+      let selectedEnemyIsBoss = false
       if (stage?.type === 'combat' && stage.combatType) {
         this.add.text(this.cameras.main.width - 12, 8, `Combat: ${stage.combatType}`, { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', align: 'right' }).setOrigin(1, 0)
         const stageNumber = run.stageIndex + run.biomeIndex * 100
@@ -139,7 +133,11 @@ export class GameScene extends Phaser.Scene {
           window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: false } }))
         }
         const biomeId = run.stagePlan.biomeId
-        const pool = getEnemiesFor(biomeId, stage.combatType)
+        let pool = getEnemiesFor(biomeId, stage.combatType)
+        if (pool.length === 0 && (stage.combatType === 'boss' || stage.combatType === 'miniboss')) {
+          const allDefs = getEnemyDefs()
+          pool = allDefs.filter(d => stage.combatType === 'boss' ? d.tags.isBoss : d.tags.isMiniboss)
+        }
         if (pool.length > 0) {
           const idx = ((): number => {
             let h = 2166136261 >>> 0
@@ -151,6 +149,7 @@ export class GameScene extends Phaser.Scene {
           selectedEnemyImageKey = def.imageKey
           selectedEnemyName = def.displayName
           selectedEnemyIsBlessed = !!def.tags.isBlessed
+          selectedEnemyIsBoss = !!def.tags.isBoss
         } else {
           const idx = ((): number => {
             let h = 2166136261 >>> 0
@@ -168,6 +167,10 @@ export class GameScene extends Phaser.Scene {
         }
         if (selectedEnemyName) {
           this.add.text(this.cameras.main.width - 12, 26, `Enemy: ${selectedEnemyName}`, { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff', align: 'right' }).setOrigin(1, 0).setDepth(50)
+        }
+        // Global blessing of bosses from unique events
+        if (stage.combatType === 'boss' && gameManager.areGlobalBossesBlessed()) {
+          selectedEnemyIsBlessed = true
         }
       }
 
@@ -413,7 +416,9 @@ export class GameScene extends Phaser.Scene {
             const isSelected = selectedId === rec.id
             applyStyles(false, isSelected)
             if (isSelected) {
-              info.setText(`${name}  x${rec.count}\n${desc}`)
+              const titleLine = isBlessed ? `${name}  x${rec.count} (BLESSED)` : `${name}  x${rec.count}`
+              info.setColor(isBlessed ? '#ffd166' : '#9db0ff')
+              info.setText(`${titleLine}\n${desc}`)
             }
 
             const hit = that.add.zone(0, 0, T, T).setOrigin(0).setInteractive().setDepth(1003)
@@ -422,7 +427,9 @@ export class GameScene extends Phaser.Scene {
             hit.on('pointerdown', () => { tile.setScale((isSelected ? 1.08 : 1.04) * 0.98) })
             hit.on('pointerup', () => {
               selectedId = rec.id
-              info.setText(`${name}  x${rec.count}\n${desc}`)
+              const titleLine = isBlessed ? `${name}  x${rec.count} (BLESSED)` : `${name}  x${rec.count}`
+              info.setColor(isBlessed ? '#ffd166' : '#9db0ff')
+              info.setText(`${titleLine}\n${desc}`)
               renderModalPage()
               updatePagerModal()
             })
@@ -448,7 +455,10 @@ export class GameScene extends Phaser.Scene {
             const def = itemRegistry.get(sel.id)
             const name = def?.name ?? sel.id
             const desc = def?.description ?? 'No description'
-            info.setText(`${name}  x${sel.count}\n${desc}`)
+            const isBlessed = blessedSet.has(sel.id)
+            const titleLine = isBlessed ? `${name}  x${sel.count} (BLESSED)` : `${name}  x${sel.count}`
+            info.setColor(isBlessed ? '#ffd166' : '#9db0ff')
+            info.setText(`${titleLine}\n${desc}`)
           }
         }
         renderModalPage(); updatePagerModal()
@@ -463,19 +473,25 @@ export class GameScene extends Phaser.Scene {
       frame.setScale(sFrame)
       frame.setDepth(20)
 
+      const placeFramedImage = (key: string): Phaser.GameObjects.Image | null => {
+        if (!this.textures.exists(key)) return null
+        const img = this.add.image(frame.x, frame.y + frame.displayHeight * 0.20, key).setOrigin(0.5, 1)
+        const maxW = frame.displayWidth * 0.97
+        const maxH = frame.displayHeight * 0.74
+        const sw = maxW / img.width
+        const sh = maxH / img.height
+        img.setScale(Math.min(sw, sh))
+        img.setDepth(10)
+        return img
+      }
+
       // Place enemy inside transparent window of frame
       let enemySprite: Phaser.GameObjects.Image | null = null
       if (stage?.type === 'combat') {
         const enemyKey = selectedEnemyImageKey
         if (enemyKey) {
-          enemySprite = this.add.image(frame.x, frame.y + frame.displayHeight * 0.20, enemyKey).setOrigin(0.5, 1)
-          const maxW = frame.displayWidth * 0.97
-          const maxH = frame.displayHeight * 0.74
-          const sw = maxW / enemySprite.width
-          const sh = maxH / enemySprite.height
-          enemySprite.setScale(Math.min(sw, sh))
-          enemySprite.setDepth(10)
-          if (selectedEnemyIsBlessed) {
+          enemySprite = placeFramedImage(enemyKey)
+          if (selectedEnemyIsBlessed && enemySprite) {
             enemySprite.setTint(0xffd166)
             const glow = this.add.image(enemySprite.x, enemySprite.y, enemyKey).setOrigin(0.5, 1)
             glow.setScale(enemySprite.scale * 1.04)
@@ -507,7 +523,23 @@ export class GameScene extends Phaser.Scene {
       this.add.rectangle(panelX, panelY, panelW, panelH, 0x0f1226, 0.8).setOrigin(0)
       this.add.rectangle(panelX, panelY, panelW, panelH).setStrokeStyle(1, 0x2a2f55).setOrigin(0)
       this.add.text(panelX + 4, panelY + 4, 'Battle Log', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e5e7ff' })
-      const logTextObj = this.add.text(panelX + 4, panelY + 24, '', { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', lineSpacing: 2, wordWrap: { width: panelW - 8 } }).setOrigin(0)
+
+      // Text area is clipped to stay inside the panel
+      const logClipTop = panelY + 24
+      const logClipHeight = panelH - (logClipTop - panelY) - 4
+      const logTextObj = this.add.text(panelX + 4, logClipTop, '', {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#b3c0ff',
+        lineSpacing: 2,
+        wordWrap: { width: panelW - 8 },
+      }).setOrigin(0)
+      const logMaskG = this.add.graphics()
+      logMaskG.fillStyle(0xffffff, 1)
+      logMaskG.fillRect(panelX, logClipTop, panelW, logClipHeight)
+      logMaskG.setVisible(false)
+      const logMask = logMaskG.createGeometryMask()
+      logTextObj.setMask(logMask)
 
       // Lightweight log buffer and on-screen log
       let logBuffer = ''
@@ -515,6 +547,43 @@ export class GameScene extends Phaser.Scene {
         logBuffer = text
         logTextObj.setText(text)
       }
+
+      // Boss fight presentation state (slow, turn-based over autoplay ticks)
+      let bossSteps: Array<{ lines: string[]; bossHp: number }> | null = null
+      let bossStepIndex = 0
+      let bossMaxHp = 1
+      let bossHpBarFill: Phaser.GameObjects.Rectangle | null = null
+
+      const advanceBossStep = () => {
+        if (!bossSteps || bossStepIndex >= bossSteps.length) return
+        const step = bossSteps[bossStepIndex]
+        const cur = logBuffer ? `${logBuffer}\n` : ''
+        updateLog(cur + step.lines.join('\n'))
+        if (bossHpBarFill && bossMaxHp > 0) {
+          const pct = Math.max(0, Math.min(1, step.bossHp / bossMaxHp))
+          bossHpBarFill.scaleX = pct
+        }
+        bossStepIndex += 1
+      }
+
+      const onAutoPlayAdvance = () => {
+        // If a boss fight is in progress, each autoplay tick advances one "turn" of the boss log
+        if (bossSteps && bossStepIndex < bossSteps.length) {
+          advanceBossStep()
+          // When the final step has been revealed, bossSteps will be cleared by the combat
+          return
+        }
+        if (!canAutoAdvance || !goNextStage) return
+        goNextStage()
+      }
+      if (typeof window !== 'undefined') {
+        window.addEventListener('game:autoplay-advance', onAutoPlayAdvance as EventListener)
+      }
+      this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('game:autoplay-advance', onAutoPlayAdvance as EventListener)
+        }
+      })
 
       // If this is a combat stage, gate combat behind Start Combat or auto-combat
       if (stage?.type === 'combat' && run) {
@@ -547,80 +616,261 @@ export class GameScene extends Phaser.Scene {
         const resolveCombat = async (): Promise<void> => {
           startBtn.disableInteractive().setAlpha(0.6)
           let result: { outcome: 'win'|'loss'; log: string[]; enemiesKilled: number }
-          if (stage.combatType === 'single') {
-            result = await runSingleCombat(run.seed, stageNumber, runItems, { enemyBlessed: selectedEnemyIsBlessed })
-          } else if (stage.combatType === 'multi') {
-            result = await runMultiCombat(run.seed, stageNumber, runItems, { enemyBlessed: selectedEnemyIsBlessed })
-          } else if (stage.combatType === 'miniboss') {
-            result = await runMiniBoss(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed })
+          if (stage.combatType === 'boss' && selectedEnemyIsBoss) {
+            // Boss fights are pre-resolved but revealed slowly as "turns" on each autoplay tick.
+            result = await runMiniBoss(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed, role: 'boss' })
+
+            // Build a simple HP bar at the top-center of the game view
+            if (!bossHpBarFill) {
+              const barW = this.cameras.main.width * 0.48
+              const barH = 12
+              const barX = this.cameras.main.width / 2
+              const barY = 32
+              const bg = this.add.rectangle(barX, barY, barW, barH, 0x111827, 0.9)
+                .setOrigin(0.5)
+                .setDepth(300)
+              bg.setStrokeStyle(1, 0x4b5563)
+              bossHpBarFill = this.add.rectangle(barX - barW / 2, barY, barW, barH - 3, 0x22c55e, 1)
+                .setOrigin(0, 0.5)
+                .setDepth(301)
+            }
+
+            // Parse log into steps keyed by boss HP lines
+            const steps: Array<{ lines: string[]; bossHp: number }> = []
+            let currentLines: string[] = []
+            let lastHp = 0
+            const hpRegex = /Boss HP:\s*(\d+)/i
+            for (const line of result.log) {
+              currentLines.push(line)
+              const m = hpRegex.exec(line)
+              if (m) {
+                lastHp = parseInt(m[1] ?? '0', 10) || 0
+                steps.push({ lines: currentLines, bossHp: lastHp })
+                currentLines = []
+              }
+            }
+            if (currentLines.length > 0) {
+              steps.push({ lines: currentLines, bossHp: lastHp })
+            }
+            bossSteps = steps.length > 0 ? steps : null
+            bossStepIndex = 0
+            bossMaxHp = bossSteps && bossSteps.length > 0 ? Math.max(...bossSteps.map(s => s.bossHp)) || 1 : 1
+            if (bossHpBarFill) {
+              bossHpBarFill.scaleX = 1
+            }
+
+            const onBossFinished = async () => {
+              const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
+              const cur = logBuffer ? `${logBuffer}\n` : ''
+              updateLog(cur + `Outcome: ${outcomeText}`)
+              void recordBattleStats(result.enemiesKilled, stageNumber)
+              gameManager.addEnemiesKilled(result.enemiesKilled)
+              if (result.outcome === 'win') {
+                gameManager.incBossDefeated()
+                if (selectedEnemyIsBlessed) {
+                  const rng = fromSeed(`${run.seed}|${stageNumber}|bless`)
+                  const roll = rng.next()
+                  if (roll < 0.25) {
+                    const owned = Array.from(new Set(gameManager.getRunItems().map(it => it.id)))
+                    if (owned.length > 0) {
+                      const pickIdx = Math.floor(rng.next() * owned.length)
+                      const chosen = owned[pickIdx]
+                      gameManager.addBlessedItem(chosen)
+                      await gameManager.persistStagePlan()
+                      renderItemsPanel()
+                      const cur2 = logBuffer ? `${logBuffer}\n` : ''
+                      updateLog(cur2 + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
+                    }
+                  }
+                }
+                // After boss victory, allow advancing
+                startBtn.destroy()
+                goNextStage = async () => {
+                  canAutoAdvance = false
+                  bossSteps = null
+                  bossHpBarFill = null
+                  await gameManager.advance()
+                  this.scene.restart()
+                }
+                canAutoAdvance = true
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+                }
+                makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                  if (!goNextStage) return
+                  void goNextStage()
+                })
+              } else {
+                const livesLeft = gameManager.decrementLife()
+                await gameManager.persistStagePlan()
+                const cur3 = logBuffer ? `${logBuffer}\n` : ''
+                updateLog(cur3 + `You lost a life. Lives remaining: ${livesLeft}/3`)
+                if (livesLeft <= 0) {
+                  try {
+                    const prog = gameManager.getBiomeProgress()
+                    const stageIdx = prog.stageIndex ?? 0
+                    const xpGained = Math.max(0, 10 + stageIdx * 5)
+                    const xpRes = await addMyXp(xpGained)
+                    await incMyDeaths(1)
+                    const metrics = gameManager.getRunMetrics()
+                    const run = gameManager.getRun()
+                    const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                      window.dispatchEvent(new CustomEvent('game:run-ended', {
+                        detail: {
+                          reason: 'death',
+                          xpGained,
+                          level: xpRes?.level,
+                          xp: xpRes?.xp,
+                          metrics,
+                          seed: run?.seed,
+                          biomeId: stage?.biomeId,
+                          stageIndex: run?.stageIndex,
+                          biomesCompleted,
+                        }
+                      }))
+                    }
+                  } catch {}
+                  await completeRunAndMaybeReward()
+                  gameManager.resetRun()
+                  this.scene.stop('GameScene'); this.scene.start('GameScene')
+                  return
+                }
+                // If still have lives, treat as normal loss and allow restarting from next stage
+                startBtn.destroy()
+                goNextStage = async () => {
+                  canAutoAdvance = false
+                  bossSteps = null
+                  bossHpBarFill = null
+                  await gameManager.advance()
+                  this.scene.restart()
+                }
+                canAutoAdvance = true
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+                }
+                makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                  if (!goNextStage) return
+                  void goNextStage()
+                })
+              }
+            }
+
+            // Immediately reveal the first step so the player sees action without waiting a full interval
+            if (bossSteps && bossSteps.length > 0) {
+              advanceBossStep()
+              // When the last step is consumed, finish the boss fight effects
+              const checkInterval = this.time.addEvent({
+                delay: 200,
+                callback: () => {
+                  if (!bossSteps || bossStepIndex < bossSteps.length) return
+                  checkInterval.remove(false)
+                  void onBossFinished()
+                },
+                loop: true,
+              })
+            } else {
+              // Fallback: if something went wrong, just apply outcome immediately
+              await onBossFinished()
+            }
           } else {
-            result = await runSingleCombat(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed })
-          }
-          const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
-          updateLog([`Outcome: ${outcomeText}`, '', ...result.log].join('\n'))
-          void recordBattleStats(result.enemiesKilled, stageNumber)
-          gameManager.addEnemiesKilled(result.enemiesKilled)
-          if (result.outcome === 'win') {
-            if (stage.combatType === 'miniboss') gameManager.incMinibossDefeated()
-            if (stage.combatType === 'boss') gameManager.incBossDefeated()
-            // Blessed enemy reward: 25% chance to bless a random owned item for the remainder of the run
-            if (selectedEnemyIsBlessed) {
-              const rng = fromSeed(`${run.seed}|${stageNumber}|bless`)
-              const roll = rng.next()
-              if (roll < 0.25) {
-                const owned = Array.from(new Set(gameManager.getRunItems().map(it => it.id)))
-                if (owned.length > 0) {
-                  const pickIdx = Math.floor(rng.next() * owned.length)
-                  const chosen = owned[pickIdx]
-                  gameManager.addBlessedItem(chosen)
-                  await gameManager.persistStagePlan()
-                  renderItemsPanel()
-                  const cur = logBuffer ? `${logBuffer}\n` : ''
-                  updateLog(cur + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
+            if (stage.combatType === 'single') {
+              result = await runSingleCombat(run.seed, stageNumber, runItems, { enemyBlessed: selectedEnemyIsBlessed })
+            } else if (stage.combatType === 'multi') {
+              result = await runMultiCombat(run.seed, stageNumber, runItems, { enemyBlessed: selectedEnemyIsBlessed })
+            } else if (stage.combatType === 'miniboss') {
+              result = await runMiniBoss(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed, role: 'miniboss' })
+            } else {
+              result = await runSingleCombat(run.seed, stageNumber, gameManager.getRunItems(), { enemyBlessed: selectedEnemyIsBlessed })
+            }
+            const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
+            updateLog([`Outcome: ${outcomeText}`, '', ...result.log].join('\n'))
+            void recordBattleStats(result.enemiesKilled, stageNumber)
+            gameManager.addEnemiesKilled(result.enemiesKilled)
+            if (result.outcome === 'win') {
+              if (stage.combatType === 'miniboss') gameManager.incMinibossDefeated()
+              // Blessed enemy reward: 25% chance to bless a random owned item for the remainder of the run
+              if (selectedEnemyIsBlessed) {
+                const rng = fromSeed(`${run.seed}|${stageNumber}|bless`)
+                const roll = rng.next()
+                if (roll < 0.25) {
+                  const owned = Array.from(new Set(gameManager.getRunItems().map(it => it.id)))
+                  if (owned.length > 0) {
+                    const pickIdx = Math.floor(rng.next() * owned.length)
+                    const chosen = owned[pickIdx]
+                    gameManager.addBlessedItem(chosen)
+                    await gameManager.persistStagePlan()
+                    renderItemsPanel()
+                    const cur = logBuffer ? `${logBuffer}\\n` : ''
+                    updateLog(cur + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
+                  }
                 }
               }
             }
-          }
-          if (result.outcome === 'loss') {
-            const livesLeft = gameManager.decrementLife()
-            await gameManager.persistStagePlan()
-            const cur = logBuffer ? `${logBuffer}\n` : ''
-            updateLog(cur + `You lost a life. Lives remaining: ${livesLeft}/3`)
-            if (livesLeft <= 0) {
-              // Award XP based on progress and count a death
-              try {
-                const prog = gameManager.getBiomeProgress()
-                const stageIdx = prog.stageIndex ?? 0
-                const xp = Math.max(0, 10 + stageIdx * 5)
-                const xpRes = await addMyXp(xp)
-                await incMyDeaths(1)
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
-                }
-              } catch {}
-              await completeRunAndMaybeReward()
-              gameManager.resetRun()
-              this.scene.stop('GameScene'); this.scene.start('GameScene')
-              return
+            if (result.outcome === 'loss') {
+              const livesLeft = gameManager.decrementLife()
+              await gameManager.persistStagePlan()
+              const cur = logBuffer ? `${logBuffer}\\n` : ''
+              updateLog(cur + `You lost a life. Lives remaining: ${livesLeft}/3`)
+              if (livesLeft <= 0) {
+                // Award XP based on progress and count a death
+                try {
+                  const prog = gameManager.getBiomeProgress()
+                  const stageIdx = prog.stageIndex ?? 0
+                  const xpGained = Math.max(0, 10 + stageIdx * 5)
+                  const xpRes = await addMyXp(xpGained)
+                  await incMyDeaths(1)
+                  const metrics = gameManager.getRunMetrics()
+                  const run = gameManager.getRun()
+                  const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                    window.dispatchEvent(new CustomEvent('game:run-ended', {
+                      detail: {
+                        reason: 'death',
+                        xpGained,
+                        level: xpRes?.level,
+                        xp: xpRes?.xp,
+                        metrics,
+                        seed: run?.seed,
+                        biomeId: stage?.biomeId,
+                        stageIndex: run?.stageIndex,
+                        biomesCompleted,
+                      }
+                    }))
+                  }
+                } catch {}
+                await completeRunAndMaybeReward()
+                gameManager.resetRun()
+                this.scene.stop('GameScene'); this.scene.start('GameScene')
+                return
+              }
             }
+            // After resolution, remove start button and show Next Stage
+            startBtn.destroy()
+            goNextStage = async () => {
+              canAutoAdvance = false
+              await gameManager.advance()
+              this.scene.restart()
+            }
+            canAutoAdvance = true
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+            }
+            makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+              if (!goNextStage) return
+              void goNextStage()
+            })
           }
-          // After resolution, remove start button and show Next Stage
-          startBtn.destroy()
-          goNextStage = async () => {
-            canAutoAdvance = false
-            await gameManager.advance()
-            this.scene.restart()
-          }
-          canAutoAdvance = true
-          makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
-            if (!goNextStage) return
-            void goNextStage()
-          })
         }
         if (gameManager.isAutoCombat()) { void resolveCombat() }
       } else if (stage?.type === 'choice' && run) {
         // Present seeded choice options (2-3)
         const stageNumber = run.stageIndex + run.biomeIndex * 100
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: false } }))
+        }
         const choiceOptions = pickChoiceOptions(run.seed, stageNumber)
         // Position higher so bottom Start/Next slots remain untouched
         const btnYStart = centerY - 24
@@ -710,6 +960,9 @@ export class GameScene extends Phaser.Scene {
               this.scene.restart()
             }
             canAutoAdvance = true
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+            }
             makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
               if (!goNextStage) return
               void goNextStage()
@@ -744,16 +997,7 @@ export class GameScene extends Phaser.Scene {
           const desc = "You encounter a strange pedestal in the middle of nowhere. You've heard stories that they can duplicate whatever's placed on top of them."
           const cur = logBuffer ? `${logBuffer}\n` : ''
           updateLog(cur + desc)
-          const emptyKey = 'enemy:empty'
-          if (this.textures.exists(emptyKey)) {
-            const sprite = this.add.image(frame.x, frame.y + frame.displayHeight * 0.20, emptyKey).setOrigin(0.5, 1)
-            const maxW = frame.displayWidth * 0.97
-            const maxH = frame.displayHeight * 0.74
-            const sw = maxW / sprite.width
-            const sh = maxH / sprite.height
-            sprite.setScale(Math.min(sw, sh))
-            sprite.setDepth(10)
-          }
+          placeFramedImage('enemy:empty')
 
             const itemsNow = gameManager.getRunItems()
             if (itemsNow.length === 0) {
@@ -867,6 +1111,178 @@ export class GameScene extends Phaser.Scene {
             overlay.on('pointerdown', closeAll)
             close.on('pointerdown', closeAll)
           }
+        } else if (uniqueId === 'other_place') {
+          const stageNumber = run.stageIndex + run.biomeIndex * 100
+          const rng = fromSeed(`${run.seed}|unique|${stageNumber}|other_place`)
+          const descLines = [
+            'A table appears where there was none, set with a steaming cup of tea and a plate of sugar cookies.',
+            'Beyond the table, reality thins into a blue, starless expanse: The Other Place.',
+            'Four beings take notice of you, each offering a different bargain.'
+          ]
+          const cur = logBuffer ? `${logBuffer}\n` : ''
+          updateLog(cur + descLines.join('\n'))
+
+          placeFramedImage('unique:teacookies')
+
+          const that = this
+          const camW = that.cameras.main.width
+          const camH = that.cameras.main.height
+          const overlay = that.add.rectangle(0, 0, camW, camH, 0x000000, 0.45).setOrigin(0).setInteractive().setDepth(1000)
+          const w = Math.min(560, camW - 32)
+          const h = Math.min(360, Math.max(260, camH - 140))
+          const panel = that.add.rectangle(camW / 2, camH / 2, w, h, 0x0f1226, 1).setOrigin(0.5).setDepth(1001)
+          panel.setStrokeStyle(1, 0x2a2f55)
+          const title = that.add.text(panel.x, panel.y - h / 2 + 10, 'The Other Place', { fontFamily: 'sans-serif', fontSize: '16px', color: '#e5e7ff' }).setOrigin(0.5, 0).setDepth(1002)
+          const subtitle = that.add.text(panel.x, title.y + title.displayHeight + 2, 'Choose an offering to accept a blessing', { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff' }).setOrigin(0.5, 0).setDepth(1002)
+
+          const choicesYStart = subtitle.y + subtitle.displayHeight + 12
+          const spacing = 28
+
+          const buttons: Phaser.GameObjects.Text[] = []
+
+          const destroyModal = () => {
+            overlay.destroy()
+            panel.destroy()
+            title.destroy()
+            subtitle.destroy()
+            buttons.forEach(b => b.destroy())
+          }
+
+          const finalizeChoice = async () => {
+            destroyModal()
+            goNextStage = async () => {
+              canAutoAdvance = false
+              await gameManager.advance()
+              that.scene.restart()
+            }
+            canAutoAdvance = true
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+            }
+            makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+              if (!goNextStage) return
+              void goNextStage()
+            })
+          }
+
+          const disableButtons = () => {
+            buttons.forEach(b => b.disableInteractive().setAlpha(0.6))
+          }
+
+          const makeChoiceBtn = (idx: number, label: string, onPick: () => Promise<void>) => {
+            const btn = that.add.text(panel.x, choicesYStart + idx * spacing, label, {
+              fontFamily: 'sans-serif',
+              fontSize: '14px',
+              color: '#cfe1ff',
+              backgroundColor: '#101531'
+            }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(1002)
+            btn.setInteractive({ useHandCursor: true })
+            btn.setStroke('#2a2f55', 1)
+            btn.on('pointerover', () => { btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff) })
+            btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
+            btn.on('pointerdown', async () => {
+              disableButtons()
+              await onPick()
+              await finalizeChoice()
+            })
+            buttons.push(btn)
+          }
+
+          // The Curious: sacrifice max HP for double damage
+          makeChoiceBtn(0, 'Offer to The Curious', async () => {
+            const lossPct = (int(rng, 10, 75)) / 100
+            const curMult = gameManager.getMaxHpMultiplier()
+            const newMult = Math.max(0.1, curMult * (1 - lossPct))
+            gameManager.setMaxHpMultiplier(newMult)
+            const dmgMult = gameManager.getDamageMultiplier()
+            gameManager.setDamageMultiplier(Math.max(1, dmgMult * 2))
+            await gameManager.persistStagePlan()
+            const lines = [
+              'You invite The Curious to take what it wants.',
+              `Your maximum health feels diminished (${Math.round(lossPct * 100)}% sacrificed).`,
+              'In exchange, your strikes grow violently sharper.'
+            ]
+            const curLog = logBuffer ? `${logBuffer}\n` : ''
+            updateLog(curLog + lines.join('\n'))
+          })
+
+          // Xuq\'talv – reroll all items, with a chance for new items to become blessed
+          makeChoiceBtn(1, "Petition Xuq'talv, The Archaizer", async () => {
+            const before = gameManager.getRunItems()
+            const totalStacks = before.reduce((acc, it) => acc + (it.stacks ?? 0), 0)
+            const allIds = Array.from(itemRegistry.keys())
+            const picks: { id: string; stacks: number }[] = []
+            if (allIds.length > 0) {
+              for (let i = 0; i < totalStacks; i++) {
+                const idx = int(rng, 0, allIds.length - 1)
+                picks.push({ id: allIds[idx], stacks: 1 })
+              }
+            }
+            const updated = picks
+            gameManager.setRunItems(updated)
+
+            // Bless a subset of items, guaranteeing at least one blessed
+            const uniqueIds = Array.from(new Set(updated.map(it => it.id)))
+            const blessed: string[] = []
+            for (const id of uniqueIds) {
+              if (rng.next() < 0.15) {
+                gameManager.addBlessedItem(id)
+                blessed.push(id)
+              }
+            }
+            if (blessed.length === 0 && uniqueIds.length > 0) {
+              const idx = int(rng, 0, uniqueIds.length - 1)
+              const id = uniqueIds[idx]
+              gameManager.addBlessedItem(id)
+              blessed.push(id)
+            }
+
+            renderItemsPanel()
+            await gameManager.persistRunItems()
+            await gameManager.persistStagePlan()
+
+            const lines: string[] = []
+            lines.push('You surrender your possessions to Xuq\'talv.')
+            lines.push('One by one, they are rewritten into unfamiliar shapes.')
+            if (updated.length === 0) {
+              lines.push('When the dust settles, you are left with nothing.')
+            } else {
+              lines.push(`You leave with ${updated.length} strangely rewritten item(s).`)
+            }
+            if (blessed.length > 0) {
+              lines.push(`A few glimmer with archaic sigils: ${blessed.join(', ')}.`)
+            }
+            const curLog = logBuffer ? `${logBuffer}\n` : ''
+            updateLog(curLog + lines.join('\n'))
+          })
+
+          // Lenley Davids – status reflect flag only (mechanics to come from engine)
+          makeChoiceBtn(2, 'Share tea with Lenley Davids', async () => {
+            gameManager.enableStatusReflect()
+            await gameManager.persistStagePlan()
+            const lines = [
+              'You sit with Lenley Davids, sharing tea and stories that feel larger than the room.',
+              'Time slips sideways for a while.',
+              'When you stand, something about you feels reflective, like harm will no longer be entirely one-way.'
+            ]
+            const curLog = logBuffer ? `${logBuffer}\n` : ''
+            updateLog(curLog + lines.join('\n'))
+          })
+
+          // Lal_glyph_bru_glyph_Ek_glyph_ – future bosses are globally blessed
+          makeChoiceBtn(3, 'Gaze back at LalglyphbruglyphEkglyph', async () => {
+            gameManager.enableGlobalBlessedBosses()
+            await gameManager.persistStagePlan()
+            const lines = [
+              'You meet the gaze of the one who names you between glyphs.',
+              'Nothing obvious happens. The air does not crack, the world does not end.',
+              'Somewhere ahead, bosses take notice. They will not arrive unblessed.'
+            ]
+            const curLog = logBuffer ? `${logBuffer}\n` : ''
+            updateLog(curLog + lines.join('\n'))
+          })
+
+          overlay.on('pointerdown', () => { /* swallow clicks until a choice is made */ })
         } else {
           goNextStage = async () => {
             canAutoAdvance = false
@@ -897,10 +1313,26 @@ export class GameScene extends Phaser.Scene {
         try {
           const prog = gameManager.getBiomeProgress()
           const stageIdx = prog.stageIndex ?? 0
-          const xp = Math.max(0, 10 + stageIdx * 5)
-          const xpRes = await addMyXp(xp)
+          const xpGained = Math.max(0, 10 + stageIdx * 5)
+          const xpRes = await addMyXp(xpGained)
+          const metrics = gameManager.getRunMetrics()
+          const run = gameManager.getRun()
+          const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+            window.dispatchEvent(new CustomEvent('game:run-ended', {
+              detail: {
+                reason: 'manual',
+                xpGained,
+                level: xpRes?.level,
+                xp: xpRes?.xp,
+                metrics,
+                seed: run?.seed,
+                biomeId: prog.biomeIndex != null ? gameManager.getCurrentStage()?.biomeId : null,
+                stageIndex: run?.stageIndex,
+                biomesCompleted,
+              }
+            }))
           }
         } catch {}
         await completeRunAndMaybeReward()

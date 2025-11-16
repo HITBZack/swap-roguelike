@@ -54,13 +54,20 @@ export async function incMyDeaths(by = 1): Promise<number | null> {
   const { data: auth } = await supabase.auth.getUser()
   const uid = auth.user?.id
   if (!uid || !Number.isFinite(by) || by <= 0) return null
-  const { data, error } = await supabase.rpc('profile_inc_deaths', { p_user: uid, p_by: Math.floor(by) })
-  if (error) {
+  try {
+    const { data, error } = await supabase.rpc('profile_inc_deaths', { p_user: uid, p_by: Math.floor(by) })
+    if (error) {
+      // eslint-disable-next-line no-console
+      console.warn('incMyDeaths error', error)
+      return null
+    }
+    return data as number
+  } catch (err) {
+    // Network or RPC-level failure should never break game flow
     // eslint-disable-next-line no-console
-    console.warn('incMyDeaths error', error)
+    console.warn('incMyDeaths exception', err)
     return null
   }
-  return data as number
 }
 
 

@@ -13,6 +13,18 @@ import type { ItemInstance } from '../services/items/types'
 import { computeBaseStats, buildEffectiveStats } from '../services/player/Stats'
 import { gameManager } from '../services/GameManager'
 
+type DeathSummary = {
+  reason: 'death' | 'manual'
+  xpGained: number
+  level?: number
+  xp?: number
+  seed?: string | null
+  biomeId?: string | null
+  stageIndex?: number | null
+  biomesCompleted?: number
+  metrics: { enemiesKilled: number; minibosses: number; bosses: number; itemsGained: number }
+}
+
 const itemImageUrls = import.meta.glob<string>('../assets/item_images/*.png', { eager: true, as: 'url' })
 
 export function App(): JSX.Element {
@@ -27,13 +39,12 @@ export function App(): JSX.Element {
   const [loadout, setLoadout] = useState<Record<string, number>>({})
   const [itemModalId, setItemModalId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [runStats, setRunStats] = useState<{ seed: string | null; biome: string | null; stageIndex: number | null; lives: number | null; duration: string; progressPct: number; stageLabel: string }>(() => ({ seed: null, biome: null, stageIndex: null, lives: null, duration: '—', progressPct: 0, stageLabel: '—' }))
-  const [autoCombat, setAutoCombat] = useState<boolean>(gameManager.isAutoCombat())
+  const [runStats, setRunStats] = useState<{ seed: string | null; biome: string | null; stageIndex: number | null; lives: number | null; duration: string; progressPct: number; stageLabel: string; biomesCompleted: number }>(() => ({ seed: null, biome: null, stageIndex: null, lives: null, duration: '—', progressPct: 0, stageLabel: '—', biomesCompleted: 0 }))
   const [metrics, setMetrics] = useState<{ enemiesKilled: number; minibosses: number; bosses: number; itemsGained: number }>({ enemiesKilled: 0, minibosses: 0, bosses: 0, itemsGained: 0 })
   const [autoPlay, setAutoPlay] = useState<boolean>(true)
   const [autoPlayProgress, setAutoPlayProgress] = useState<number>(0)
   const [autoPlayCooling, setAutoPlayCooling] = useState<boolean>(false)
-  const [autoPlayStageReady, setAutoPlayStageReady] = useState<boolean>(true)
+  const [deathSummary, setDeathSummary] = useState<DeathSummary | null>(null)
 
   const itemIconMap = useMemo(() => {
     const entries = Object.entries(itemImageUrls).map(([p, url]) => {
@@ -44,15 +55,21 @@ export function App(): JSX.Element {
     return Object.fromEntries(entries) as Record<string, string>
   }, [])
 
-  // GameScene tells us when the current stage is safe to autoplay-advance (e.g. after a choice/unique has resolved and Next Stage is visible)
+  // Keep GameManager's auto-combat flag in sync with Auto-Play
   useEffect(() => {
-    const onStageReady = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { ready?: boolean } | undefined
-      setAutoPlayStageReady(detail?.ready !== false)
+    gameManager.setAutoCombat(autoPlay)
+  }, [autoPlay])
+
+  // Show a death / run-end summary overlay when the game signals a completed run
+  useEffect(() => {
+    const onRunEnded = (e: Event) => {
+      const detail = (e as CustomEvent<DeathSummary>).detail
+      if (!detail || typeof detail.xpGained !== 'number') return
+      setDeathSummary(detail)
     }
-    window.addEventListener('game:autoplay-stage-ready', onStageReady as EventListener)
+    window.addEventListener('game:run-ended', onRunEnded as EventListener)
     return () => {
-      window.removeEventListener('game:autoplay-stage-ready', onStageReady as EventListener)
+      window.removeEventListener('game:run-ended', onRunEnded as EventListener)
     }
   }, [])
 
@@ -80,7 +97,7 @@ export function App(): JSX.Element {
       const dt = ts - lastTs
       lastTs = ts
 
-      const enabled = autoPlay && autoPlayStageReady && runStats.lives != null && (runStats.lives ?? 0) > 0
+      const enabled = autoPlay && runStats.lives != null && (runStats.lives ?? 0) > 0
       if (!enabled) {
         acc = 0
         phase = 'running'
@@ -149,8 +166,8 @@ export function App(): JSX.Element {
       const prog = gameManager.getBiomeProgress()
       const pct = prog.totalStages && prog.stageIndex != null ? Math.min(100, Math.max(0, Math.round((prog.stageIndex / prog.totalStages) * 100))) : 0
       const stageLabel = prog.totalStages && prog.stageIndex != null ? `${prog.stageIndex + 1}/${prog.totalStages}` : '—'
-      setRunStats({ seed: run?.seed ?? null, biome: stage?.biomeId ?? null, stageIndex: run?.stageIndex ?? null, lives: lives ?? null, duration, progressPct: pct, stageLabel })
-      setAutoCombat(gameManager.isAutoCombat())
+      const biomesCompleted = gameManager.getBiomesCompleted()
+      setRunStats({ seed: run?.seed ?? null, biome: stage?.biomeId ?? null, stageIndex: run?.stageIndex ?? null, lives: lives ?? null, duration, progressPct: pct, stageLabel, biomesCompleted })
       setMetrics(gameManager.getRunMetrics())
       t = window.setTimeout(tick, 500)
     }
@@ -274,6 +291,9 @@ export function App(): JSX.Element {
     return () => window.clearTimeout(t)
   }, [effStats.maxHp, effStats.damage, effStats.accuracy, effStats.dodge, effStats.projectileCount, effStats.shield, effStats.lifestealPct, effStats.dotDmgPct])
 
+  const clampedAutoPlayProgress = Math.max(0, Math.min(1, autoPlayProgress))
+  const visualAutoPlayProgress = clampedAutoPlayProgress < 0.03 ? 0 : clampedAutoPlayProgress
+
   return (
     <div style={{ display: 'grid', gridTemplateRows: '48px 1fr auto', minHeight: '100vh', background: '#0b0e1a', color: '#e5e7ff', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', background: '#101531', borderBottom: '1px solid #1f2447' }}>
@@ -338,7 +358,13 @@ export function App(): JSX.Element {
           <div style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, height: '100%', padding: 8, display: 'grid', gridTemplateRows: 'auto 1fr', rowGap: 8 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
               <button
-                onClick={() => setAutoPlay((prev) => !prev)}
+                onClick={() => {
+                  setAutoPlay((prev) => {
+                    const next = !prev
+                    gameManager.setAutoCombat(next)
+                    return next
+                  })
+                }}
                 className="hover-chip"
                 style={{
                   height: 26,
@@ -365,8 +391,7 @@ export function App(): JSX.Element {
                       inset: 0,
                       background: 'linear-gradient(90deg, #4255ff, #8ba5ff)',
                       transformOrigin: 'left center',
-                      transform: `scaleX(${Math.max(0, Math.min(1, autoPlayProgress))})`,
-                      transition: 'transform 120ms linear',
+                      transform: `scaleX(${visualAutoPlayProgress})`,
                       boxShadow: autoPlayCooling ? '0 0 8px rgba(129, 230, 217, 0.9)' : 'none',
                       opacity: autoPlay ? 1 : 0.45,
                     }}
@@ -384,8 +409,8 @@ export function App(): JSX.Element {
               <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', rowGap: 6, columnGap: 8, fontSize: 12, color: '#b3c0ff' }}>
                 <div>Seed</div><div style={{ color: '#e5e7ff' }}>{runStats.seed ?? '—'}</div>
                 <div>Biome</div><div style={{ color: '#e5e7ff' }}>{runStats.biome ?? '—'}</div>
-                <div>Stage</div><div style={{ color: '#e5e7ff' }}>{runStats.stageIndex != null ? runStats.stageIndex + 1 : '—'}</div>
-                <div>Lives</div><div style={{ color: '#e5e7ff' }}>{runStats.lives ?? '—'}</div>
+                <div>Biomes Completed</div><div style={{ color: '#e5e7ff' }}>{runStats.biomesCompleted}</div>
+                <div>Lives</div><div style={{ color: '#e5e7ff' }}>{runStats.lives != null ? `${runStats.lives}/3` : '—'}</div>
                 <div>Duration</div><div style={{ color: '#e5e7ff' }}>{runStats.duration}</div>
                 <div style={{ alignSelf: 'center' }}>Biome Progress</div>
                 <div>
@@ -393,16 +418,6 @@ export function App(): JSX.Element {
                   <div style={{ width: '100%', height: 8, borderRadius: 4, background: '#12173a', border: '1px solid #1f2447', overflow: 'hidden' }}>
                     <div style={{ width: `${runStats.progressPct}%`, height: '100%', background: '#5865f2' }} />
                   </div>
-                </div>
-                <div>Auto Combat</div>
-                <div>
-                  <button
-                    onClick={() => { gameManager.setAutoCombat(!autoCombat); setAutoCombat(gameManager.isAutoCombat()) }}
-                    className="hover-chip"
-                    style={{ height: 24, padding: '0 10px', borderRadius: 6, border: '1px solid #2a2f55', background: autoCombat ? '#1f3d7a' : '#2a2f55', color: '#e5e7ff', fontSize: 12 }}
-                  >
-                    {autoCombat ? 'On' : 'Off'}
-                  </button>
                 </div>
               </div>
             </div>
@@ -653,8 +668,165 @@ export function App(): JSX.Element {
       <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />
       <UsernameModal open={Boolean(needUsername)} />
+      {deathSummary && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 2000,
+            background: 'radial-gradient(circle at top, rgba(72,85,255,0.28), rgba(5,8,25,0.96))',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              width: 520,
+              maxWidth: '96vw',
+              borderRadius: 16,
+              background: '#050814',
+              border: '1px solid #334155',
+              boxShadow: '0 22px 65px rgba(0,0,0,0.7)',
+              padding: 20,
+              display: 'grid',
+              gridTemplateRows: 'auto auto auto',
+              rowGap: 14,
+              color: '#e5e7ff',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  background: 'linear-gradient(135deg,#ef4444,#b91c1c)',
+                  display: 'grid',
+                  placeItems: 'center',
+                  boxShadow: '0 0 18px rgba(248,113,113,0.65)',
+                  flexShrink: 0,
+                }}
+              >
+                <span style={{ fontSize: 24 }}>☠</span>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>
+                  {deathSummary.reason === 'death' ? 'You fell in battle' : 'Run concluded'}
+                </div>
+                <div style={{ fontSize: 12, color: '#a5b4fc', marginTop: 2 }}>
+                  {deathSummary.seed && (
+                    <span>Seed {deathSummary.seed}</span>
+                  )}
+                  {typeof deathSummary.biomesCompleted === 'number' && (
+                    <span>{deathSummary.seed ? ' • ' : ''}Biomes completed: {deathSummary.biomesCompleted}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setDeathSummary(null)}
+                className="hover-chip"
+                style={{
+                  fontSize: 11,
+                  padding: '4px 10px',
+                  borderRadius: 999,
+                  border: '1px solid #4b5563',
+                  background: 'transparent',
+                  color: '#e5e7ff',
+                  cursor: 'pointer',
+                }}
+              >
+                Continue
+              </button>
+            </div>
 
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.4fr 1fr',
+                gap: 12,
+                alignItems: 'stretch',
+              }}
+            >
+              <div
+                style={{
+                  borderRadius: 10,
+                  background: 'linear-gradient(135deg,#0f172a,#020617)',
+                  border: '1px solid #1f2937',
+                  padding: 12,
+                  display: 'grid',
+                  rowGap: 6,
+                }}
+              >
+                <div style={{ fontSize: 12, color: '#9ca3af' }}>XP Reward</div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: '#facc15' }}>+{deathSummary.xpGained}</div>
+                  {typeof deathSummary.level === 'number' && typeof deathSummary.xp === 'number' && (
+                    <div style={{ fontSize: 12, color: '#a5b4fc' }}>
+                      Level {deathSummary.level}, XP {deathSummary.xp}
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: '#6b7280' }}>
+                  Thanks for playing this run! Try a new loadout or seed and see how far you get.
+                </div>
+              </div>
 
+              <div
+                style={{
+                  borderRadius: 10,
+                  background: '#020617',
+                  border: '1px solid #1f2937',
+                  padding: 10,
+                  display: 'grid',
+                  rowGap: 4,
+                  fontSize: 11,
+                  color: '#cbd5f5',
+                }}
+              >
+                <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 2 }}>Run Stats</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Enemies Killed</span>
+                  <span>{deathSummary.metrics.enemiesKilled}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Minibosses</span>
+                  <span>{deathSummary.metrics.minibosses}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Bosses</span>
+                  <span>{deathSummary.metrics.bosses}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Items Gained</span>
+                  <span>{deathSummary.metrics.itemsGained}</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: '#9ca3af' }}>
+              <span>
+                Tip: Equip items in the right panel between runs to change your build.
+              </span>
+              <button
+                onClick={() => setDeathSummary(null)}
+                className="hover-chip"
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 999,
+                  border: '1px solid #4b5563',
+                  background: '#111827',
+                  color: '#e5e7ff',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Item info modal */}
       {itemModalId && (
         <div onClick={() => setItemModalId(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center' }}>
