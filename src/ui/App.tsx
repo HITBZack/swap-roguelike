@@ -30,6 +30,10 @@ export function App(): JSX.Element {
   const [runStats, setRunStats] = useState<{ seed: string | null; biome: string | null; stageIndex: number | null; lives: number | null; duration: string; progressPct: number; stageLabel: string }>(() => ({ seed: null, biome: null, stageIndex: null, lives: null, duration: '—', progressPct: 0, stageLabel: '—' }))
   const [autoCombat, setAutoCombat] = useState<boolean>(gameManager.isAutoCombat())
   const [metrics, setMetrics] = useState<{ enemiesKilled: number; minibosses: number; bosses: number; itemsGained: number }>({ enemiesKilled: 0, minibosses: 0, bosses: 0, itemsGained: 0 })
+  const [autoPlay, setAutoPlay] = useState<boolean>(true)
+  const [autoPlayProgress, setAutoPlayProgress] = useState<number>(0)
+  const [autoPlayCooling, setAutoPlayCooling] = useState<boolean>(false)
+  const [autoPlayStageReady, setAutoPlayStageReady] = useState<boolean>(true)
 
   const itemIconMap = useMemo(() => {
     const entries = Object.entries(itemImageUrls).map(([p, url]) => {
@@ -39,6 +43,85 @@ export function App(): JSX.Element {
     })
     return Object.fromEntries(entries) as Record<string, string>
   }, [])
+
+  // GameScene tells us when the current stage is safe to autoplay-advance (e.g. after a choice/unique has resolved and Next Stage is visible)
+  useEffect(() => {
+    const onStageReady = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { ready?: boolean } | undefined
+      setAutoPlayStageReady(detail?.ready !== false)
+    }
+    window.addEventListener('game:autoplay-stage-ready', onStageReady as EventListener)
+    return () => {
+      window.removeEventListener('game:autoplay-stage-ready', onStageReady as EventListener)
+    }
+  }, [])
+
+  // Autoplay interval: when enabled, dispatch a tick every 3s with a 0.5s cooldown and smooth progress.
+  // Reset timer/progress whenever the stage index changes so the bar always starts empty on a new stage.
+  useEffect(() => {
+    let frame: number | null = null
+    const ACTION_MS = 3000
+    const PAUSE_MS = 500
+    let lastTs: number | null = null
+    let acc = 0
+    let phase: 'running' | 'pause' = 'running'
+
+    // Ensure fresh stage starts from zero
+    setAutoPlayCooling(false)
+    setAutoPlayProgress(0)
+
+    const loop = (ts: number) => {
+      if (lastTs == null) {
+        // Prime the clock without advancing progress so bar starts at 0
+        lastTs = ts
+        frame = window.requestAnimationFrame(loop)
+        return
+      }
+      const dt = ts - lastTs
+      lastTs = ts
+
+      const enabled = autoPlay && autoPlayStageReady && runStats.lives != null && (runStats.lives ?? 0) > 0
+      if (!enabled) {
+        acc = 0
+        phase = 'running'
+        lastTs = null
+        setAutoPlayCooling(false)
+        setAutoPlayProgress(0)
+      } else {
+        if (phase === 'running') {
+          acc += dt
+          const clamped = Math.min(ACTION_MS, acc)
+          setAutoPlayCooling(false)
+          setAutoPlayProgress(clamped / ACTION_MS)
+          if (acc >= ACTION_MS) {
+            // Trigger an autoplay action
+            try {
+              window.dispatchEvent(new CustomEvent('game:autoplay-advance'))
+            } catch {}
+            phase = 'pause'
+            acc = 0
+            setAutoPlayCooling(true)
+            setAutoPlayProgress(1)
+          }
+        } else {
+          acc += dt
+          if (acc >= PAUSE_MS) {
+            phase = 'running'
+            acc = 0
+            lastTs = null
+            setAutoPlayCooling(false)
+            setAutoPlayProgress(0)
+          }
+        }
+      }
+      frame = window.requestAnimationFrame(loop)
+    }
+
+    frame = window.requestAnimationFrame(loop)
+    return () => {
+      if (frame != null) window.cancelAnimationFrame(frame)
+    }
+  }, [autoPlay, runStats.lives, runStats.stageIndex])
 
 
   // Poll GameManager for current run info to show in Stats panel
@@ -252,8 +335,48 @@ export function App(): JSX.Element {
           <ChatPanel onUserClick={(uid: string) => { setOpenCard(true); setOpenCardUserId(uid) }} />
         </aside>
         <main style={{ display: 'grid', gridTemplateRows: '1fr auto', gap: 12 }}>
-          <div style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, height: '100%', display: 'grid', placeItems: 'center', padding: 8 }}>
-            <BattleContainer />
+          <div style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, height: '100%', padding: 8, display: 'grid', gridTemplateRows: 'auto 1fr', rowGap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+              <button
+                onClick={() => setAutoPlay((prev) => !prev)}
+                className="hover-chip"
+                style={{
+                  height: 26,
+                  padding: '0 10px',
+                  borderRadius: 999,
+                  border: '1px solid #2a2f55',
+                  background: autoPlay ? '#1f3d7a' : '#2a2f55',
+                  color: '#e5e7ff',
+                  fontSize: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: autoPlay ? '#4ade80' : '#64748b' }} />
+                <span>Auto-Play</span>
+                <span style={{ fontSize: 11, opacity: 0.8 }}>{autoPlay ? 'On' : 'Off'}</span>
+              </button>
+              <div style={{ flex: 1, maxWidth: 220, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, height: 8, borderRadius: 999, background: '#111633', border: '1px solid #243057', overflow: 'hidden', position: 'relative' }}>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: 'linear-gradient(90deg, #4255ff, #8ba5ff)',
+                      transformOrigin: 'left center',
+                      transform: `scaleX(${Math.max(0, Math.min(1, autoPlayProgress))})`,
+                      transition: 'transform 120ms linear',
+                      boxShadow: autoPlayCooling ? '0 0 8px rgba(129, 230, 217, 0.9)' : 'none',
+                      opacity: autoPlay ? 1 : 0.45,
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', placeItems: 'center' }}>
+              <BattleContainer />
+            </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <div style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, padding: 12 }}>

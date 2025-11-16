@@ -221,11 +221,18 @@ class GameManager {
   private generateStagePlan(biomeIndex: number, stageIndex: number): StagePlan {
     if (!this.rng) throw new Error('RNG not ready')
     const biomeId = this.biomes[biomeIndex % this.biomes.length]
-    const type = pickWeighted<StageType>(this.rng, [
-      { value: 'combat', weight: 0.65 },
-      { value: 'choice', weight: 0.25 },
-      { value: 'unique', weight: 0.10 }
-    ])
+    // Gate unique stages: only appear once player is past the first biome
+    const isFirstBiome = biomeIndex === 0
+    const type = pickWeighted<StageType>(this.rng, isFirstBiome
+      ? [
+          { value: 'combat', weight: 0.72 },
+          { value: 'choice', weight: 0.28 },
+        ]
+      : [
+          { value: 'combat', weight: 0.65 },
+          { value: 'choice', weight: 0.25 },
+          { value: 'unique', weight: 0.10 },
+        ])
     let combatType: CombatType | undefined
     let uniqueId: string | undefined
     if (type === 'combat') {

@@ -77,12 +77,28 @@ export class GameScene extends Phaser.Scene {
       window.dispatchEvent(new CustomEvent('game:scene-ready'))
     }
 
+    // Autoplay integration: allow React UI to request an automatic Next Stage when safe
+    let goNextStage: (() => void) | null = null
+    let canAutoAdvance = false
+    const onAutoPlayAdvance = () => {
+      if (!canAutoAdvance || !goNextStage) return
+      goNextStage()
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('game:autoplay-advance', onAutoPlayAdvance as EventListener)
+    }
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('game:autoplay-advance', onAutoPlayAdvance as EventListener)
+      }
+    })
+
     ;(async () => {
       // Start or resume a run (seeded)
       let run = await gameManager.resumeRun()
       if (!run) {
         // Pre-run screen with explanation and Start button
-        const title = this.add.text(centerX, centerY - 80, 'Prepare for your run', { fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff' }).setOrigin(0.5)
+        this.add.text(centerX, centerY - 80, 'Prepare for your run', { fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff' }).setOrigin(0.5)
         const tipLines = [
           'Tip: Equip items before starting to bring them into your run.',
           'Equipping does not remove items from inventory.',
@@ -104,6 +120,14 @@ export class GameScene extends Phaser.Scene {
       this.add.text(centerX, 8, `Seed: ${run?.seed ?? 'n/a'}`, { fontFamily: 'sans-serif', fontSize: '12px', color: '#7a83c8' }).setOrigin(0.5, 0)
 
       const stage: StagePlan | null = gameManager.getCurrentStage()
+
+      // Inform host UI whether this stage is immediately autoplay-ready.
+      // For choice/unique, we pause until a decision is made and Next Stage is created.
+      if (typeof window !== 'undefined') {
+        const pauseTypes = new Set(['choice', 'unique'])
+        const ready = !(stage && pauseTypes.has(stage.type))
+        window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready } }))
+      }
       const runItems = gameManager.getRunItems()
       let selectedEnemyImageKey: string | null = null
       let selectedEnemyName: string | null = null
@@ -111,6 +135,9 @@ export class GameScene extends Phaser.Scene {
       if (stage?.type === 'combat' && stage.combatType) {
         this.add.text(this.cameras.main.width - 12, 8, `Combat: ${stage.combatType}`, { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', align: 'right' }).setOrigin(1, 0)
         const stageNumber = run.stageIndex + run.biomeIndex * 100
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: false } }))
+        }
         const biomeId = run.stagePlan.biomeId
         const pool = getEnemiesFor(biomeId, stage.combatType)
         if (pool.length > 0) {
@@ -579,20 +606,26 @@ export class GameScene extends Phaser.Scene {
           }
           // After resolution, remove start button and show Next Stage
           startBtn.destroy()
-          makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+          goNextStage = async () => {
+            canAutoAdvance = false
             await gameManager.advance()
             this.scene.restart()
+          }
+          canAutoAdvance = true
+          makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+            if (!goNextStage) return
+            void goNextStage()
           })
         }
         if (gameManager.isAutoCombat()) { void resolveCombat() }
       } else if (stage?.type === 'choice' && run) {
         // Present seeded choice options (2-3)
         const stageNumber = run.stageIndex + run.biomeIndex * 100
-        const options = pickChoiceOptions(run.seed, stageNumber, 3)
+        const choiceOptions = pickChoiceOptions(run.seed, stageNumber)
         // Position higher so bottom Start/Next slots remain untouched
         const btnYStart = centerY - 24
         const spacing = 32
-        const buttons = options.map((opt, i) => {
+        const buttons: Phaser.GameObjects.Text[] = choiceOptions.map((opt: any, i: number) => {
           const btn = this.add.text(centerX, btnYStart + i * spacing, `${opt.title}`, { fontFamily: 'sans-serif', fontSize: '14px', color: '#cfe1ff', backgroundColor: '#101531' }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(120)
           btn.setInteractive({ useHandCursor: true })
           btn.setStroke('#2a2f55', 1)
@@ -600,13 +633,13 @@ export class GameScene extends Phaser.Scene {
           btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
           btn.on('pointerdown', async () => {
             // disable all buttons to avoid double-choose
-            buttons.forEach(b => b.disableInteractive().setAlpha(0.5))
+            buttons.forEach((b: Phaser.GameObjects.Text) => b.disableInteractive().setAlpha(0.5))
             const before = gameManager.getRunItems()
-            const beforeTotal = before.reduce((a, it) => a + (it.stacks ?? 0), 0)
+            const beforeTotal = before.reduce((a: number, it: { stacks?: number }) => a + (it.stacks ?? 0), 0)
             const outcome = await opt.resolve(run.seed, stageNumber, before)
             if (outcome.updatedRunItems) {
               const after = outcome.updatedRunItems
-              const afterTotal = after.reduce((a, it) => a + (it.stacks ?? 0), 0)
+              const afterTotal = after.reduce((a: number, it: { stacks?: number }) => a + (it.stacks ?? 0), 0)
               const delta = afterTotal - beforeTotal
               if (delta > 0) gameManager.addItemsGained(delta)
               gameManager.setRunItems(after)
@@ -671,9 +704,15 @@ export class GameScene extends Phaser.Scene {
               img.on('pointerup', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35); onUp() })
               return img
             }
-            makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+            goNextStage = async () => {
+              canAutoAdvance = false
               await gameManager.advance()
               this.scene.restart()
+            }
+            canAutoAdvance = true
+            makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+              if (!goNextStage) return
+              void goNextStage()
             })
           })
           return btn
@@ -716,14 +755,23 @@ export class GameScene extends Phaser.Scene {
             sprite.setDepth(10)
           }
 
-          const itemsNow = gameManager.getRunItems()
-          if (itemsNow.length === 0) {
-            const cur2 = logBuffer ? `${logBuffer}\n` : ''
-            updateLog(cur2 + 'You have no items to duplicate.')
-            makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
-              await gameManager.advance()
-              this.scene.restart()
-            })
+            const itemsNow = gameManager.getRunItems()
+            if (itemsNow.length === 0) {
+              const cur2 = logBuffer ? `${logBuffer}\n` : ''
+              updateLog(cur2 + 'You have no items to duplicate.')
+              goNextStage = async () => {
+                canAutoAdvance = false
+                await gameManager.advance()
+                this.scene.restart()
+              }
+              canAutoAdvance = true
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+              }
+              makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                if (!goNextStage) return
+                void goNextStage()
+              })
           } else {
             const that = this
             const camW = that.cameras.main.width
@@ -778,9 +826,18 @@ export class GameScene extends Phaser.Scene {
                 const cur3 = logBuffer ? `${logBuffer}\n` : ''
                 updateLog(cur3 + `The pedestal hums. Your ${rec.id} is duplicated.`)
                 destroyModal()
-                makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+                goNextStage = async () => {
+                  canAutoAdvance = false
                   await gameManager.advance()
                   that.scene.restart()
+                }
+                canAutoAdvance = true
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+                }
+                makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                  if (!goNextStage) return
+                  void goNextStage()
                 })
               })
               grid.add(hit)
@@ -793,18 +850,36 @@ export class GameScene extends Phaser.Scene {
             })
             const closeAll = () => {
               destroyModal()
-              makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+              goNextStage = async () => {
+                canAutoAdvance = false
                 await gameManager.advance()
                 this.scene.restart()
+              }
+              canAutoAdvance = true
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+              }
+              makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                if (!goNextStage) return
+                void goNextStage()
               })
             }
             overlay.on('pointerdown', closeAll)
             close.on('pointerdown', closeAll)
           }
         } else {
-          makeImgBtn('ui:nextStage', rightSlotX, bottomY, async () => {
+          goNextStage = async () => {
+            canAutoAdvance = false
             await gameManager.advance()
             this.scene.restart()
+          }
+          canAutoAdvance = true
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+          }
+          makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+            if (!goNextStage) return
+            void goNextStage()
           })
         }
       } else {
