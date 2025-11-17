@@ -134,9 +134,19 @@ export class GameScene extends Phaser.Scene {
         }
         const biomeId = run.stagePlan.biomeId
         let pool = getEnemiesFor(biomeId, stage.combatType)
-        if (pool.length === 0 && (stage.combatType === 'boss' || stage.combatType === 'miniboss')) {
+        if (pool.length === 0) {
+          // Fallback: ignore biome but still respect combatType tags so bosses/minibosses never leak into other modes
           const allDefs = getEnemyDefs()
-          pool = allDefs.filter(d => stage.combatType === 'boss' ? d.tags.isBoss : d.tags.isMiniboss)
+          if (stage.combatType === 'boss') {
+            pool = allDefs.filter(d => d.tags.isBoss)
+          } else if (stage.combatType === 'miniboss') {
+            pool = allDefs.filter(d => d.tags.isMiniboss)
+          } else if (stage.combatType === 'multi') {
+            pool = allDefs.filter(d => d.tags.isMulti && !d.tags.isBoss && !d.tags.isMiniboss)
+          } else {
+            // single combat fallback: any non-boss, non-miniboss, non-multi enemy from any biome
+            pool = allDefs.filter(d => !d.tags.isBoss && !d.tags.isMiniboss && !d.tags.isMulti)
+          }
         }
         if (pool.length > 0) {
           const idx = ((): number => {
@@ -150,20 +160,6 @@ export class GameScene extends Phaser.Scene {
           selectedEnemyName = def.displayName
           selectedEnemyIsBlessed = !!def.tags.isBlessed
           selectedEnemyIsBoss = !!def.tags.isBoss
-        } else {
-          const idx = ((): number => {
-            let h = 2166136261 >>> 0
-            const str = `${run.seed}|${stageNumber}`
-            for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) }
-            return this.enemyKeys.length > 0 ? (h >>> 0) % this.enemyKeys.length : 0
-          })()
-          const key = this.enemyKeys[idx] ?? null
-          if (key) {
-            selectedEnemyImageKey = key
-            const raw = key.replace(/^enemy:/, '')
-            const stripped = raw.replace(/\.png$/i, '').replace(/[-_]?icon$/i, '')
-            selectedEnemyName = stripped.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-          }
         }
         if (selectedEnemyName) {
           this.add.text(this.cameras.main.width - 12, 26, `Enemy: ${selectedEnemyName}`, { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff', align: 'right' }).setOrigin(1, 0).setDepth(50)

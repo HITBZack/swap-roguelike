@@ -15,8 +15,14 @@ export type BattleResult = {
 
 type CombatOptions = { enemyBlessed?: boolean; role?: 'normal' | 'miniboss' | 'boss' }
 
+function getBiomeEnemyMultiplier(stageNumber: number): number {
+  const biomeIndex = Math.max(0, Math.floor(stageNumber / 100))
+  return 1 + 0.1 * biomeIndex
+}
+
 export async function runSingleCombat(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}`)
+  const enemyBiomeMult = getBiomeEnemyMultiplier(stageNumber)
 
   const level = useAppState.getState().player.level ?? 1
   const pst = buildEffectiveStats(level, items)
@@ -48,6 +54,11 @@ export async function runSingleCombat(runSeed: string, stageNumber: number, item
     dodgeChance: 0.03,
     blockChance: 0.02,
     statuses: {}
+  }
+  if (enemyBiomeMult !== 1) {
+    enemy.hp = Math.floor(enemy.hp * enemyBiomeMult)
+    enemy.atk = Math.floor(enemy.atk * enemyBiomeMult)
+    enemy.def = Math.floor(Math.max(1, enemy.def * enemyBiomeMult))
   }
   if (options.enemyBlessed) {
     enemy.hp = Math.floor(enemy.hp * 3)
@@ -129,6 +140,7 @@ export async function runSingleCombat(runSeed: string, stageNumber: number, item
 
 export async function runMultiCombat(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}|multi`)
+  const enemyBiomeMult = getBiomeEnemyMultiplier(stageNumber)
 
   const level = useAppState.getState().player.level ?? 1
   const pst = buildEffectiveStats(level, items)
@@ -147,6 +159,13 @@ export async function runMultiCombat(runSeed: string, stageNumber: number, items
     kind: 'enemy', hp: int(rng, 10, 18), maxHp: 999, atk: 4, def: 1,
     critChance: 0.04, critMult: 1.4, dodgeChance: 0.04, blockChance: 0.02, statuses: {}
   }))
+  if (enemyBiomeMult !== 1) {
+    for (const e of enemies) {
+      e.hp = Math.floor(e.hp * enemyBiomeMult)
+      e.atk = Math.floor(e.atk * enemyBiomeMult)
+      e.def = Math.floor(Math.max(1, e.def * enemyBiomeMult))
+    }
+  }
   if (options.enemyBlessed) {
     for (const e of enemies) {
       e.hp = Math.floor(e.hp * 3)
@@ -232,6 +251,7 @@ export async function runMultiCombat(runSeed: string, stageNumber: number, items
 
 export async function runMiniBoss(runSeed: string, stageNumber: number, items: ItemInstance[], options: CombatOptions = {}): Promise<BattleResult> {
   const rng = fromSeed(`${runSeed}|${stageNumber}|miniboss`)
+  const enemyBiomeMult = getBiomeEnemyMultiplier(stageNumber)
 
   const level = useAppState.getState().player.level ?? 1
   const pst = buildEffectiveStats(level, items)
@@ -249,16 +269,22 @@ export async function runMiniBoss(runSeed: string, stageNumber: number, items: I
     critChance: 0.06, critMult: 1.5, dodgeChance: 0.03, blockChance: 0.04, statuses: {}
   }
 
-  // Difficulty scaling by role: miniboss ~2x, boss ~4x
+  if (enemyBiomeMult !== 1) {
+    boss.hp = Math.floor(boss.hp * enemyBiomeMult)
+    boss.atk = Math.floor(boss.atk * enemyBiomeMult)
+    boss.def = Math.floor(Math.max(1, boss.def * enemyBiomeMult))
+  }
+
+  // Difficulty scaling by role: miniboss ~1.85x, boss ~2.65x
   const role = options.role ?? 'miniboss'
   if (role === 'miniboss') {
-    boss.hp = Math.floor(boss.hp * 2)
-    boss.atk = Math.floor(boss.atk * 2)
-    boss.def = Math.floor(Math.max(1, boss.def * 2))
+    boss.hp = Math.floor(boss.hp * 1.85)
+    boss.atk = Math.floor(boss.atk * 1.85)
+    boss.def = Math.floor(Math.max(1, boss.def * 1.85))
   } else if (role === 'boss') {
-    boss.hp = Math.floor(boss.hp * 4)
-    boss.atk = Math.floor(boss.atk * 4)
-    boss.def = Math.floor(Math.max(1, boss.def * 4))
+    boss.hp = Math.floor(boss.hp * 2.65)
+    boss.atk = Math.floor(boss.atk * 2.65)
+    boss.def = Math.floor(Math.max(1, boss.def * 2.65))
   }
   if (options.enemyBlessed) {
     boss.hp = Math.floor(boss.hp * 3)

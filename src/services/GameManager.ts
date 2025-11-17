@@ -338,12 +338,20 @@ class GameManager {
             { value: 'unique', weight: 0.08 },
           ])
       if (type === 'combat') {
-        combatType = pickWeighted<CombatType>(this.rng, [
-          { value: 'single', weight: 0.60 },
-          { value: 'multi', weight: 0.26 },
-          { value: 'miniboss', weight: 0.12 },
-          { value: 'boss', weight: 0.02 }
-        ])
+        // In the very first biome, disallow boss combats from random generation; later biomes use full weights.
+        const combatWeights: Array<{ value: CombatType; weight: number }> = isFirstBiome
+          ? [
+              { value: 'single', weight: 0.62 },
+              { value: 'multi', weight: 0.26 },
+              { value: 'miniboss', weight: 0.12 },
+            ]
+          : [
+              { value: 'single', weight: 0.60 },
+              { value: 'multi', weight: 0.26 },
+              { value: 'miniboss', weight: 0.12 },
+              { value: 'boss', weight: 0.02 },
+            ]
+        combatType = pickWeighted<CombatType>(this.rng, combatWeights)
       } else if (type === 'unique') {
         const picked = pickUniqueEventId(this.rng)
         uniqueId = picked ?? undefined
