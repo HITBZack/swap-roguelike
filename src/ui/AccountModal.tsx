@@ -23,8 +23,6 @@ export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.E
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
-  if (!open) return null
-
   // Discover available character models (same folder GameScene uses)
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore

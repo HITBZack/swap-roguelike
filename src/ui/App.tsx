@@ -149,7 +149,9 @@ export function App(): JSX.Element {
     const tick = () => {
       const run = gameManager.getRun()
       const stage = gameManager.getCurrentStage()
-      const lives = gameManager.getLivesRemaining()
+      // Only treat lives as defined once a run exists; before that, keep null so autoplay stays idle.
+      const hasRun = !!run
+      const lives = hasRun ? gameManager.getLivesRemaining() : null
       // duration
       const startMs = gameManager.getRunStartMs()
       let duration = '—'
@@ -668,7 +670,9 @@ export function App(): JSX.Element {
           <div style={{ marginLeft: 'auto', fontSize: 12, color: '#91a0ff' }}>© {new Date().getFullYear()} Swap MMO</div>
         </div>
       </footer>
-      <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
+      {openAccount && (
+        <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
+      )}
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />
       <UsernameModal open={Boolean(needUsername)} />
       {deathSummary && (
