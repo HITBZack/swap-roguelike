@@ -38,8 +38,13 @@ export function BattleContainer(): JSX.Element {
   }, [])
 
   return (
-    <div style={{ position: 'relative', width: '100%', maxWidth: 960 }}>
+    <div style={{ position: 'relative', width: '100%', maxWidth: 960, overflow: 'hidden' }}>
+      {/* Clamp Phaser canvas width to container to avoid horizontal overflow and page zooming */}
+      <style>
+        {`#phaser-host canvas { max-width: 100% !important; height: auto !important; display: block; }`}
+      </style>
       <div
+        id="phaser-host"
         ref={hostRef}
         style={{
           width: '100%',
