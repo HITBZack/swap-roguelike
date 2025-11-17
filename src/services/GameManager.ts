@@ -20,6 +20,8 @@ export type StagePlan = {
   maxHpMultiplier?: number
   bossesBlessed?: boolean
   statusReflect?: boolean
+  /** If true, the next generated stage will be forced as a boss combat. */
+  forceNextBoss?: boolean
 }
 
 export type RunDTO = {
@@ -54,7 +56,7 @@ class GameManager {
     this.biomeStageCounts = this.generateBiomeCounts(this.rng)
     const biomeIndex = 0
     const stageIndex = 0
-    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex)
+    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex, false)
     stagePlan.attackMultiplier = 1
     stagePlan.maxHpMultiplier = 1
     stagePlan.bossesBlessed = false
@@ -101,10 +103,11 @@ class GameManager {
     const prevPlan = this.run.stagePlan
     const prevLives = prevPlan.livesRemaining ?? 3
     const prevBlessed = prevPlan.blessedItemIds ?? []
-     const prevAtkMult = prevPlan.attackMultiplier ?? 1
-     const prevHpMult = prevPlan.maxHpMultiplier ?? 1
-     const prevBossesBlessed = !!prevPlan.bossesBlessed
-     const prevStatusReflect = !!prevPlan.statusReflect
+    const prevAtkMult = prevPlan.attackMultiplier ?? 1
+    const prevHpMult = prevPlan.maxHpMultiplier ?? 1
+    const prevBossesBlessed = !!prevPlan.bossesBlessed
+    const prevStatusReflect = !!prevPlan.statusReflect
+    const prevForceNextBoss = !!prevPlan.forceNextBoss
     let biomeIndex = this.run.biomeIndex
     let stageIndex = this.run.stageIndex + 1
     const stagesInBiome = this.biomeStageCounts[biomeIndex]
@@ -113,13 +116,14 @@ class GameManager {
       stageIndex = 0
       if (biomeIndex === 0) this.biomeStageCounts = this.generateBiomeCounts(this.rng)
     }
-    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex)
+    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex, prevForceNextBoss)
     stagePlan.livesRemaining = prevLives
     stagePlan.blessedItemIds = prevBlessed
     stagePlan.attackMultiplier = prevAtkMult
     stagePlan.maxHpMultiplier = prevHpMult
     stagePlan.bossesBlessed = prevBossesBlessed
     stagePlan.statusReflect = prevStatusReflect
+    stagePlan.forceNextBoss = false
     const updated = await updateRunProgress(this.run.id, biomeIndex, stageIndex, stagePlan)
     if (!updated) return null
     this.run = { ...this.run, biomeIndex, stageIndex, stagePlan }
@@ -311,33 +315,39 @@ class GameManager {
     return this.biomes.map(() => int(rng, 5, 9))
   }
 
-  private generateStagePlan(biomeIndex: number, stageIndex: number): StagePlan {
+  private generateStagePlan(biomeIndex: number, stageIndex: number, forceBoss: boolean): StagePlan {
     if (!this.rng) throw new Error('RNG not ready')
     const biomeId = this.biomes[biomeIndex % this.biomes.length]
     // Gate unique stages: only appear once player is past the first biome
     const isFirstBiome = biomeIndex === 0
-    const type = pickWeighted<StageType>(this.rng, isFirstBiome
-      ? [
-          { value: 'combat', weight: 0.75 },
-          { value: 'choice', weight: 0.25 },
-        ]
-      : [
-          { value: 'combat', weight: 0.71 },
-          { value: 'choice', weight: 0.21 },
-          { value: 'unique', weight: 0.08 },
-        ])
+    let type: StageType
     let combatType: CombatType | undefined
     let uniqueId: string | undefined
-    if (type === 'combat') {
-      combatType = pickWeighted<CombatType>(this.rng, [
-        { value: 'single', weight: 0.60 },
-        { value: 'multi', weight: 0.26 },
-        { value: 'miniboss', weight: 0.12 },
-        { value: 'boss', weight: 0.02 }
-      ])
-    } else if (type === 'unique') {
-      const picked = pickUniqueEventId(this.rng)
-      uniqueId = picked ?? undefined
+    if (forceBoss) {
+      type = 'combat'
+      combatType = 'boss'
+    } else {
+      type = pickWeighted<StageType>(this.rng, isFirstBiome
+        ? [
+            { value: 'combat', weight: 0.75 },
+            { value: 'choice', weight: 0.25 },
+          ]
+        : [
+            { value: 'combat', weight: 0.71 },
+            { value: 'choice', weight: 0.21 },
+            { value: 'unique', weight: 0.08 },
+          ])
+      if (type === 'combat') {
+        combatType = pickWeighted<CombatType>(this.rng, [
+          { value: 'single', weight: 0.60 },
+          { value: 'multi', weight: 0.26 },
+          { value: 'miniboss', weight: 0.12 },
+          { value: 'boss', weight: 0.02 }
+        ])
+      } else if (type === 'unique') {
+        const picked = pickUniqueEventId(this.rng)
+        uniqueId = picked ?? undefined
+      }
     }
     return { biomeId, index: stageIndex, type, combatType, uniqueId }
   }

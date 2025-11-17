@@ -7,6 +7,8 @@ export type ChoiceOutcome = {
   log: string[]
   updatedRunItems?: ItemInstance[]
   triggerMiniboss?: boolean
+  /** Request that the next stage be forced as a boss combat. */
+  triggerBoss?: boolean
   enemiesKilled?: number
   poorDelta?: number
 }
@@ -83,6 +85,20 @@ const baseChoices: ChoiceOption[] = [
         if (chosen.stacks <= 0) items.splice(idx, 1)
         return { log, updatedRunItems: items, poorDelta: 1 }
       }
+    }
+  },
+  {
+    id: 'gnome_boss_lair',
+    title: 'A wild gnome tells you of a boss lair',
+    description: 'Join him to seek out a guaranteed boss encounter ahead.',
+    tags: ['combat', 'boss', 'event'],
+    linkedGroups: ['danger'],
+    resolve: async (_seed, _stageNumber, runItems) => {
+      const log: string[] = []
+      log.push('A wild gnome appears, tugging at your sleeve excitedly.')
+      log.push('He whispers of a hidden boss lair deep ahead in these biomes.')
+      log.push('You agree to follow the gnome. A boss encounter now awaits you soon.')
+      return { log, updatedRunItems: cloneRunItems(runItems), triggerBoss: true }
     }
   },
   {
@@ -221,17 +237,34 @@ export function pickChoiceOptions(seed: string, stageNumber: number, _count = 3)
   if (pool.length === 0) return picked
   // Roll how many options to show (2 or 3)
   const target = int(rng, 2, 3)
-  // First pick: uniform
-  let idx = int(rng, 0, pool.length - 1)
-  const first = pool.splice(idx, 1)[0]
-  picked.push(first)
+
+  // Rare gnome boss-lair option (~5% chance per choice stage)
+  const gnomeIdx = pool.findIndex(o => o.id === 'gnome_boss_lair')
+  if (gnomeIdx >= 0) {
+    const roll = rng.next()
+    if (roll < 0.05) {
+      const gnome = pool.splice(gnomeIdx, 1)[0]
+      picked.push(gnome)
+    }
+  }
+
+  // First pick: ensure we have an anchor option for tag biasing
+  let first: ChoiceOption
+  if (picked.length === 0) {
+    const idx = int(rng, 0, pool.length - 1)
+    first = pool.splice(idx, 1)[0]
+    picked.push(first)
+  } else {
+    first = picked[0]
+  }
+
   // Next picks: bias toward shared tags or linked groups with first
   const tags = new Set(first.tags)
   const groups = new Set(first.linkedGroups ?? [])
   while (picked.length < target && pool.length > 0) {
     const preferred = pool.filter(opt => opt.tags.some(t => tags.has(t)) || (opt.linkedGroups ?? []).some(g => groups.has(g)))
     const bucket = preferred.length > 0 ? preferred : pool
-    idx = int(rng, 0, bucket.length - 1)
+    const idx = int(rng, 0, bucket.length - 1)
     const choice = bucket[idx]
     // remove from pool
     const remIdx = pool.findIndex(o => o.id === choice.id)

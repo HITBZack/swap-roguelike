@@ -15,7 +15,6 @@ export interface AccountModalProps {
  * Simple account settings modal. Shows email, placeholder settings, and sign-out.
  */
 export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.Element | null {
-  if (!open) return null
   const username = useAppState((s) => s.player.username)
   const avatarUrl = useAppState((s) => s.player.avatarUrl)
   const level = useAppState((s) => s.player.level)
@@ -23,6 +22,8 @@ export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.E
   const setPlayer = useAppState((s) => s.setPlayer)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+
+  if (!open) return null
 
   // Discover available character models (same folder GameScene uses)
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment

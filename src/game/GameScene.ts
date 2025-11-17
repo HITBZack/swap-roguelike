@@ -938,6 +938,10 @@ export class GameScene extends Phaser.Scene {
                 }
               }
             }
+            if (outcome.triggerBoss && stage) {
+              stage.forceNextBoss = true
+              await gameManager.persistStagePlan()
+            }
             // After resolution, show Next Stage (image button) using the same placement constants as combat
             const bottomY = frame.y + frame.displayHeight / 2.27
             const slotOffset = 220 * sFrame
