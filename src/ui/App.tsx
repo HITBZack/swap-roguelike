@@ -298,7 +298,7 @@ export function App(): JSX.Element {
   const visualAutoPlayProgress = clampedAutoPlayProgress < 0.03 ? 0 : clampedAutoPlayProgress
 
   return (
-    <div style={{ display: 'grid', gridTemplateRows: '48px 1fr auto', minHeight: '100vh', background: '#0b0e1a', color: '#e5e7ff', fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div style={{ display: 'grid', gridTemplateRows: '48px 1fr auto', minHeight: '100vh', background: '#0b0e1a', color: '#e5e7ff', fontFamily: 'Inter, system-ui, sans-serif', width: '100vw', overflowX: 'hidden', boxSizing: 'border-box' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', background: '#101531', borderBottom: '1px solid #1f2447' }}>
         <strong>Swap MMO</strong>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -353,7 +353,7 @@ export function App(): JSX.Element {
           </button>
         </div>
       </header>
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 300px', gap: 12, padding: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 300px', gap: 12, padding: 12, maxWidth: '100%', boxSizing: 'border-box', overflowX: 'auto' }}>
         <aside style={{ background: '#0f1226', border: '1px solid #1f2447', borderRadius: 8, padding: 0, overflow: 'hidden' }}>
           <ChatPanel onUserClick={(uid: string) => { setOpenCard(true); setOpenCardUserId(uid) }} />
         </aside>
