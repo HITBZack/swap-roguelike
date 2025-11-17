@@ -12,6 +12,7 @@ export interface ProfileDTO {
   showcase_items?: string[] | null
   deaths?: number | null
   equipped_titles?: string[] | null
+  character_sprite?: string | null
 }
 
 export async function fetchProfileById(userId: string): Promise<ProfileDTO | null> {
@@ -24,6 +25,27 @@ export async function fetchProfileById(userId: string): Promise<ProfileDTO | nul
   if (error) {
     // eslint-disable-next-line no-console
     console.warn('fetchProfileById error', error)
+    return null
+  }
+  return data as unknown as ProfileDTO
+}
+
+/**
+ * Update current user's in-game character sprite key.
+ */
+export async function updateMyCharacterSprite(spriteKey: string | null): Promise<ProfileDTO | null> {
+  const { data: auth } = await supabase.auth.getUser()
+  const uid = auth.user?.id
+  if (!uid) return null
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({ character_sprite: spriteKey })
+    .eq('id', uid)
+    .select('*')
+    .single()
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('updateMyCharacterSprite error', error)
     return null
   }
   return data as unknown as ProfileDTO

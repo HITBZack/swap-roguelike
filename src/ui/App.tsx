@@ -39,7 +39,7 @@ export function App(): JSX.Element {
   const [loadout, setLoadout] = useState<Record<string, number>>({})
   const [itemModalId, setItemModalId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [runStats, setRunStats] = useState<{ seed: string | null; biome: string | null; stageIndex: number | null; lives: number | null; duration: string; progressPct: number; stageLabel: string; biomesCompleted: number }>(() => ({ seed: null, biome: null, stageIndex: null, lives: null, duration: '—', progressPct: 0, stageLabel: '—', biomesCompleted: 0 }))
+  const [runStats, setRunStats] = useState<{ seed: string | null; biome: string | null; stageIndex: number | null; lives: number | null; duration: string; progressPct: number; stageLabel: string; biomesCompleted: number; stageType: string | null }>(() => ({ seed: null, biome: null, stageIndex: null, lives: null, duration: '—', progressPct: 0, stageLabel: '—', biomesCompleted: 0, stageType: null }))
   const [metrics, setMetrics] = useState<{ enemiesKilled: number; minibosses: number; bosses: number; itemsGained: number }>({ enemiesKilled: 0, minibosses: 0, bosses: 0, itemsGained: 0 })
   const [autoPlay, setAutoPlay] = useState<boolean>(true)
   const [autoPlayProgress, setAutoPlayProgress] = useState<number>(0)
@@ -73,11 +73,12 @@ export function App(): JSX.Element {
     }
   }, [])
 
-  // Autoplay interval: when enabled, dispatch a tick every 3s with a 0.5s cooldown and smooth progress.
+  // Autoplay interval: when enabled, dispatch a tick every 3s (7s on unique stages) with a 0.5s cooldown and smooth progress.
   // Reset timer/progress whenever the stage index changes so the bar always starts empty on a new stage.
   useEffect(() => {
     let frame: number | null = null
-    const ACTION_MS = 3000
+    const BASE_ACTION_MS = 3000
+    const UNIQUE_ACTION_MS = 7000
     const PAUSE_MS = 500
     let lastTs: number | null = null
     let acc = 0
@@ -107,10 +108,11 @@ export function App(): JSX.Element {
       } else {
         if (phase === 'running') {
           acc += dt
-          const clamped = Math.min(ACTION_MS, acc)
+          const actionMs = runStats.stageType === 'unique' ? UNIQUE_ACTION_MS : BASE_ACTION_MS
+          const clamped = Math.min(actionMs, acc)
           setAutoPlayCooling(false)
-          setAutoPlayProgress(clamped / ACTION_MS)
-          if (acc >= ACTION_MS) {
+          setAutoPlayProgress(clamped / actionMs)
+          if (acc >= actionMs) {
             // Trigger an autoplay action
             try {
               window.dispatchEvent(new CustomEvent('game:autoplay-advance'))
@@ -138,7 +140,7 @@ export function App(): JSX.Element {
     return () => {
       if (frame != null) window.cancelAnimationFrame(frame)
     }
-  }, [autoPlay, runStats.lives, runStats.stageIndex])
+  }, [autoPlay, runStats.lives, runStats.stageIndex, runStats.stageType])
 
 
   // Poll GameManager for current run info to show in Stats panel
@@ -167,7 +169,8 @@ export function App(): JSX.Element {
       const pct = prog.totalStages && prog.stageIndex != null ? Math.min(100, Math.max(0, Math.round((prog.stageIndex / prog.totalStages) * 100))) : 0
       const stageLabel = prog.totalStages && prog.stageIndex != null ? `${prog.stageIndex + 1}/${prog.totalStages}` : '—'
       const biomesCompleted = gameManager.getBiomesCompleted()
-      setRunStats({ seed: run?.seed ?? null, biome: stage?.biomeId ?? null, stageIndex: run?.stageIndex ?? null, lives: lives ?? null, duration, progressPct: pct, stageLabel, biomesCompleted })
+      const stageType = stage?.type ?? null
+      setRunStats({ seed: run?.seed ?? null, biome: stage?.biomeId ?? null, stageIndex: run?.stageIndex ?? null, lives: lives ?? null, duration, progressPct: pct, stageLabel, biomesCompleted, stageType })
       setMetrics(gameManager.getRunMetrics())
       t = window.setTimeout(tick, 500)
     }

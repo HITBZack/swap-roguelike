@@ -504,7 +504,11 @@ export class GameScene extends Phaser.Scene {
       }
 
       // Place player character near bottom inside frame
-      const playerKey = this.playerKeys[0]
+      let playerKey = this.playerKeys[0]
+      const selectedSprite = useAppState.getState().player.characterSprite
+      if (selectedSprite && this.textures.exists(selectedSprite)) {
+        playerKey = selectedSprite
+      }
       if (playerKey) {
         const p = this.add.image(frame.x, frame.y + frame.displayHeight * 0.30, playerKey).setOrigin(0.5, 1)
         const maxPW = frame.displayWidth * 0.20
@@ -1115,174 +1119,200 @@ export class GameScene extends Phaser.Scene {
           const stageNumber = run.stageIndex + run.biomeIndex * 100
           const rng = fromSeed(`${run.seed}|unique|${stageNumber}|other_place`)
           const descLines = [
-            'A table appears where there was none, set with a steaming cup of tea and a plate of sugar cookies.',
-            'Beyond the table, reality thins into a blue, starless expanse: The Other Place.',
+            'You suddenly come across a steaming cup of chamomile tea and a plate of sugar cookies.',
             'Four beings take notice of you, each offering a different bargain.'
           ]
           const cur = logBuffer ? `${logBuffer}\n` : ''
           updateLog(cur + descLines.join('\n'))
 
-          placeFramedImage('unique:teacookies')
-
           const that = this
           const camW = that.cameras.main.width
           const camH = that.cameras.main.height
-          const overlay = that.add.rectangle(0, 0, camW, camH, 0x000000, 0.45).setOrigin(0).setInteractive().setDepth(1000)
-          const w = Math.min(560, camW - 32)
-          const h = Math.min(360, Math.max(260, camH - 140))
-          const panel = that.add.rectangle(camW / 2, camH / 2, w, h, 0x0f1226, 1).setOrigin(0.5).setDepth(1001)
-          panel.setStrokeStyle(1, 0x2a2f55)
-          const title = that.add.text(panel.x, panel.y - h / 2 + 10, 'The Other Place', { fontFamily: 'sans-serif', fontSize: '16px', color: '#e5e7ff' }).setOrigin(0.5, 0).setDepth(1002)
-          const subtitle = that.add.text(panel.x, title.y + title.displayHeight + 2, 'Choose an offering to accept a blessing', { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff' }).setOrigin(0.5, 0).setDepth(1002)
 
-          const choicesYStart = subtitle.y + subtitle.displayHeight + 12
-          const spacing = 28
+          const cookies = placeFramedImage('unique:teacookies')
+          let clickHint: Phaser.GameObjects.Text | null = null
+          if (cookies) {
+            cookies.setInteractive({ useHandCursor: true })
+            clickHint = that.add.text(cookies.x, cookies.y - cookies.displayHeight - 8, 'click me', {
+              fontFamily: 'monospace',
+              fontSize: '11px',
+              color: '#cbd5ff'
+            }).setOrigin(0.5, 1).setDepth(11).setAlpha(0.85)
+          }
 
           const buttons: Phaser.GameObjects.Text[] = []
 
-          const destroyModal = () => {
-            overlay.destroy()
-            panel.destroy()
-            title.destroy()
-            subtitle.destroy()
-            buttons.forEach(b => b.destroy())
-          }
+          const openOtherPlaceModal = () => {
+            if (!cookies) return
+            cookies.disableInteractive()
+            clickHint?.destroy()
 
-          const finalizeChoice = async () => {
-            destroyModal()
-            goNextStage = async () => {
-              canAutoAdvance = false
-              await gameManager.advance()
-              that.scene.restart()
+            const overlay = that.add.rectangle(0, 0, camW, camH, 0x000000, 0.45).setOrigin(0).setInteractive().setDepth(1000)
+            const baseW = Math.min(560, camW - 32)
+            const baseH = Math.min(360, Math.max(260, camH - 140))
+            const w = baseW * 0.8
+            const h = baseH * 0.8
+            const panel = that.add.rectangle(camW / 2, camH / 2, w, h, 0x0f1226, 1).setOrigin(0.5).setDepth(1001)
+            panel.setStrokeStyle(1, 0x2a2f55)
+            const title = that.add.text(panel.x, panel.y - h / 2 + 10, 'The Other Place', { fontFamily: 'sans-serif', fontSize: '16px', color: '#e5e7ff' }).setOrigin(0.5, 0).setDepth(1002)
+            const subtitle = that.add.text(panel.x, title.y + title.displayHeight + 2, 'Choose an offering to accept a blessing', { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff' }).setOrigin(0.5, 0).setDepth(1002)
+
+            const choiceCount = 4
+            const spacing = 30
+            const bottomMargin = 24
+            const totalHeight = (choiceCount - 1) * spacing
+            const firstY = panel.y + h / 2 - bottomMargin - totalHeight
+
+            const destroyModal = () => {
+              overlay.destroy()
+              panel.destroy()
+              title.destroy()
+              subtitle.destroy()
+              buttons.forEach(b => b.destroy())
             }
-            canAutoAdvance = true
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
-            }
-            makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
-              if (!goNextStage) return
-              void goNextStage()
-            })
-          }
 
-          const disableButtons = () => {
-            buttons.forEach(b => b.disableInteractive().setAlpha(0.6))
-          }
-
-          const makeChoiceBtn = (idx: number, label: string, onPick: () => Promise<void>) => {
-            const btn = that.add.text(panel.x, choicesYStart + idx * spacing, label, {
-              fontFamily: 'sans-serif',
-              fontSize: '14px',
-              color: '#cfe1ff',
-              backgroundColor: '#101531'
-            }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(1002)
-            btn.setInteractive({ useHandCursor: true })
-            btn.setStroke('#2a2f55', 1)
-            btn.on('pointerover', () => { btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff) })
-            btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
-            btn.on('pointerdown', async () => {
-              disableButtons()
-              await onPick()
-              await finalizeChoice()
-            })
-            buttons.push(btn)
-          }
-
-          // The Curious: sacrifice max HP for double damage
-          makeChoiceBtn(0, 'Offer to The Curious', async () => {
-            const lossPct = (int(rng, 10, 75)) / 100
-            const curMult = gameManager.getMaxHpMultiplier()
-            const newMult = Math.max(0.1, curMult * (1 - lossPct))
-            gameManager.setMaxHpMultiplier(newMult)
-            const dmgMult = gameManager.getDamageMultiplier()
-            gameManager.setDamageMultiplier(Math.max(1, dmgMult * 2))
-            await gameManager.persistStagePlan()
-            const lines = [
-              'You invite The Curious to take what it wants.',
-              `Your maximum health feels diminished (${Math.round(lossPct * 100)}% sacrificed).`,
-              'In exchange, your strikes grow violently sharper.'
-            ]
-            const curLog = logBuffer ? `${logBuffer}\n` : ''
-            updateLog(curLog + lines.join('\n'))
-          })
-
-          // Xuq\'talv – reroll all items, with a chance for new items to become blessed
-          makeChoiceBtn(1, "Petition Xuq'talv, The Archaizer", async () => {
-            const before = gameManager.getRunItems()
-            const totalStacks = before.reduce((acc, it) => acc + (it.stacks ?? 0), 0)
-            const allIds = Array.from(itemRegistry.keys())
-            const picks: { id: string; stacks: number }[] = []
-            if (allIds.length > 0) {
-              for (let i = 0; i < totalStacks; i++) {
-                const idx = int(rng, 0, allIds.length - 1)
-                picks.push({ id: allIds[idx], stacks: 1 })
+            const finalizeChoice = async () => {
+              destroyModal()
+              goNextStage = async () => {
+                canAutoAdvance = false
+                await gameManager.advance()
+                that.scene.restart()
               }
+              canAutoAdvance = true
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+              }
+              makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                if (!goNextStage) return
+                void goNextStage()
+              })
             }
-            const updated = picks
-            gameManager.setRunItems(updated)
 
-            // Bless a subset of items, guaranteeing at least one blessed
-            const uniqueIds = Array.from(new Set(updated.map(it => it.id)))
-            const blessed: string[] = []
-            for (const id of uniqueIds) {
-              if (rng.next() < 0.15) {
+            const disableButtons = () => {
+              buttons.forEach(b => b.disableInteractive().setAlpha(0.6))
+            }
+
+            const makeChoiceBtn = (idx: number, label: string, onPick: () => Promise<void>) => {
+              const btn = that.add.text(panel.x, firstY + idx * spacing, label, {
+                fontFamily: 'sans-serif',
+                fontSize: '14px',
+                color: '#cfe1ff',
+                backgroundColor: '#101531'
+              }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(1002)
+              btn.setInteractive({ useHandCursor: true })
+              btn.setStroke('#2a2f55', 1)
+              btn.on('pointerover', () => { btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff) })
+              btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
+              btn.on('pointerdown', async () => {
+                disableButtons()
+                await onPick()
+                await finalizeChoice()
+              })
+              buttons.push(btn)
+            }
+
+            // The Curious: sacrifice max HP for double damage
+            makeChoiceBtn(0, 'Offer to The Curious', async () => {
+              const lossPct = (int(rng, 10, 75)) / 100
+              const curMult = gameManager.getMaxHpMultiplier()
+              const newMult = Math.max(0.1, curMult * (1 - lossPct))
+              gameManager.setMaxHpMultiplier(newMult)
+              const dmgMult = gameManager.getDamageMultiplier()
+              gameManager.setDamageMultiplier(Math.max(1, dmgMult * 2))
+              await gameManager.persistStagePlan()
+              const lines = [
+                'You invite The Curious to take what it wants.',
+                `Your maximum health feels diminished (${Math.round(lossPct * 100)}% sacrificed).`,
+                'In exchange, your strikes grow violently sharper.'
+              ]
+              const curLog = logBuffer ? `${logBuffer}\n` : ''
+              updateLog(curLog + lines.join('\n'))
+            })
+
+            // Xuq\'talv – reroll all items, with a chance for new items to become blessed
+            makeChoiceBtn(1, "Petition Xuq'talv, The Archaizer", async () => {
+              const before = gameManager.getRunItems()
+              const totalStacks = before.reduce((acc, it) => acc + (it.stacks ?? 0), 0)
+              const allIds = Array.from(itemRegistry.keys())
+              const picks: { id: string; stacks: number }[] = []
+              if (allIds.length > 0) {
+                for (let i = 0; i < totalStacks; i++) {
+                  const idx = int(rng, 0, allIds.length - 1)
+                  picks.push({ id: allIds[idx], stacks: 1 })
+                }
+              }
+              const updated = picks
+              gameManager.setRunItems(updated)
+
+              // Bless a subset of items, guaranteeing at least one blessed
+              const uniqueIds = Array.from(new Set(updated.map(it => it.id)))
+              const blessed: string[] = []
+              for (const id of uniqueIds) {
+                if (rng.next() < 0.15) {
+                  gameManager.addBlessedItem(id)
+                  blessed.push(id)
+                }
+              }
+              if (blessed.length === 0 && uniqueIds.length > 0) {
+                const idx = int(rng, 0, uniqueIds.length - 1)
+                const id = uniqueIds[idx]
                 gameManager.addBlessedItem(id)
                 blessed.push(id)
               }
-            }
-            if (blessed.length === 0 && uniqueIds.length > 0) {
-              const idx = int(rng, 0, uniqueIds.length - 1)
-              const id = uniqueIds[idx]
-              gameManager.addBlessedItem(id)
-              blessed.push(id)
-            }
 
-            renderItemsPanel()
-            await gameManager.persistRunItems()
-            await gameManager.persistStagePlan()
+              renderItemsPanel()
+              await gameManager.persistRunItems()
+              await gameManager.persistStagePlan()
 
-            const lines: string[] = []
-            lines.push('You surrender your possessions to Xuq\'talv.')
-            lines.push('One by one, they are rewritten into unfamiliar shapes.')
-            if (updated.length === 0) {
-              lines.push('When the dust settles, you are left with nothing.')
-            } else {
-              lines.push(`You leave with ${updated.length} strangely rewritten item(s).`)
-            }
-            if (blessed.length > 0) {
-              lines.push(`A few glimmer with archaic sigils: ${blessed.join(', ')}.`)
-            }
-            const curLog = logBuffer ? `${logBuffer}\n` : ''
-            updateLog(curLog + lines.join('\n'))
-          })
+              const lines: string[] = []
+              lines.push('You surrender your possessions to Xuq\'talv.')
+              lines.push('One by one, they are rewritten into unfamiliar shapes.')
+              if (updated.length === 0) {
+                lines.push('When the dust settles, you are left with nothing.')
+              } else {
+                lines.push(`You leave with ${updated.length} strangely rewritten item(s).`)
+              }
+              if (blessed.length > 0) {
+                lines.push(`A few glimmer with archaic sigils: ${blessed.join(', ')}.`)
+              }
+              const curLog = logBuffer ? `${logBuffer}\n` : ''
+              updateLog(curLog + lines.join('\n'))
+            })
 
-          // Lenley Davids – status reflect flag only (mechanics to come from engine)
-          makeChoiceBtn(2, 'Share tea with Lenley Davids', async () => {
-            gameManager.enableStatusReflect()
-            await gameManager.persistStagePlan()
-            const lines = [
-              'You sit with Lenley Davids, sharing tea and stories that feel larger than the room.',
-              'Time slips sideways for a while.',
-              'When you stand, something about you feels reflective, like harm will no longer be entirely one-way.'
-            ]
-            const curLog = logBuffer ? `${logBuffer}\n` : ''
-            updateLog(curLog + lines.join('\n'))
-          })
+            // Lenley Davids – status reflect flag only (mechanics to come from engine)
+            makeChoiceBtn(2, 'Share tea with Lenley Davids', async () => {
+              gameManager.enableStatusReflect()
+              await gameManager.persistStagePlan()
+              const lines = [
+                'You sit with Lenley Davids, sharing tea and stories that feel larger than the room.',
+                'Time slips sideways for a while.',
+                'When you stand, something about you feels reflective, like harm will no longer be entirely one-way.'
+              ]
+              const curLog = logBuffer ? `${logBuffer}\n` : ''
+              updateLog(curLog + lines.join('\n'))
+            })
 
-          // Lal_glyph_bru_glyph_Ek_glyph_ – future bosses are globally blessed
-          makeChoiceBtn(3, 'Gaze back at LalglyphbruglyphEkglyph', async () => {
-            gameManager.enableGlobalBlessedBosses()
-            await gameManager.persistStagePlan()
-            const lines = [
-              'You meet the gaze of the one who names you between glyphs.',
-              'Nothing obvious happens. The air does not crack, the world does not end.',
-              'Somewhere ahead, bosses take notice. They will not arrive unblessed.'
-            ]
-            const curLog = logBuffer ? `${logBuffer}\n` : ''
-            updateLog(curLog + lines.join('\n'))
-          })
+            // Lal_glyph_bru_glyph_Ek_glyph_ – future bosses are globally blessed
+            makeChoiceBtn(3, 'Gaze back at Lal\u001fbru\u001fEk\u001f', async () => {
+              gameManager.enableGlobalBlessedBosses()
+              await gameManager.persistStagePlan()
+              const lines = [
+                'You meet the gaze of the one who names you between glyphs.',
+                'Nothing obvious happens. The air does not crack, the world does not end.',
+                'Somewhere ahead, bosses take notice. They will not arrive unblessed.'
+              ]
+              const curLog = logBuffer ? `${logBuffer}\n` : ''
+              updateLog(curLog + lines.join('\n'))
+            })
 
-          overlay.on('pointerdown', () => { /* swallow clicks until a choice is made */ })
+            overlay.on('pointerdown', () => { /* swallow clicks until a choice is made */ })
+          }
+
+          if (cookies) {
+            cookies.on('pointerup', () => {
+              openOtherPlaceModal()
+            })
+          }
         } else {
           goNextStage = async () => {
             canAutoAdvance = false

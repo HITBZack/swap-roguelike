@@ -8,7 +8,7 @@ export type UniqueEventDef = {
 
 export const UNIQUE_EVENTS: UniqueEventDef[] = [
   { id: 'pedestal_duplicate', weight: 1, showChance: 1 },
-  { id: 'other_place', weight: 3, showChance: 0.7 }
+  { id: 'other_place', weight: 3, showChance: 0.08 }
 ]
 
 export function pickUniqueEventId(rng: RNG): string | null {
