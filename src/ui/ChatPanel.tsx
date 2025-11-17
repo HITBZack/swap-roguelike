@@ -86,6 +86,8 @@ export function ChatPanel({ onUserClick }: ChatPanelProps): JSX.Element {
         .channel('public:chat_messages')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, async (payload) => {
           const row = payload.new as any
+          // Ignore messages we already appended optimistically from this client
+          if (row.user_id === uid) return
           let prof = profileCache.current[row.user_id]
           if (!prof) {
             const { data: p } = await supabase.from('profiles').select('username,avatar_url').eq('id', row.user_id).single()
