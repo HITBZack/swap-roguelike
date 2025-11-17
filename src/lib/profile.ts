@@ -126,12 +126,33 @@ export async function fetchMyProfile(): Promise<ProfileDTO | null> {
     .select('*')
     .eq('id', uid)
     .single()
+  if (!error && data) {
+    return data as unknown as ProfileDTO
+  }
+
+  // If no profile row exists yet, Supabase/PostgREST returns 406 / PGRST116 for .single().
+  const code = (error as any)?.code
+  if (code === 'PGRST116') {
+    // Create a default profile row for this user. Rely on DB defaults for most fields.
+    const { data: created, error: insertErr } = await supabase
+      .from('profiles')
+      .insert({ id: uid })
+      .select('*')
+      .single()
+    if (insertErr) {
+      // eslint-disable-next-line no-console
+      console.warn('fetchMyProfile insert error', insertErr)
+      return null
+    }
+    return created as unknown as ProfileDTO
+  }
+
+  // Any other error should be logged but not crash the app.
   if (error) {
     // eslint-disable-next-line no-console
     console.warn('fetchMyProfile error', error)
-    return null
   }
-  return data as unknown as ProfileDTO
+  return null
 }
 
 /**
