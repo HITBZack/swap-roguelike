@@ -6,6 +6,9 @@ import gameViewStructureUrl from '../assets/scene_art/Game_View_Structure.png?ur
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import teacookiesUrl from '../assets/scene_art/teacookies.png?url'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import introBackgroundUrl from '../assets/scene_art/intro_background.jpg?url'
 import { type AppState, useAppState } from '../lib/state'
 import { gameManager } from '../services/GameManager'
 import type { StagePlan } from '../services/GameManager'
@@ -34,6 +37,7 @@ export class GameScene extends Phaser.Scene {
     // Frame
     this.load.image('ui:game_frame', gameViewStructureUrl)
     this.load.image('unique:teacookies', teacookiesUrl)
+    this.load.image('ui:intro_bg', introBackgroundUrl)
 
     // Discover enemies and player models via Vite glob imports
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -91,21 +95,91 @@ export class GameScene extends Phaser.Scene {
       let run = await gameManager.resumeRun()
       if (!run) {
         // Pre-run screen with explanation and Start button
-        this.add.text(centerX, centerY - 80, 'Prepare for your run', { fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff' }).setOrigin(0.5)
+        const bg = this.add.image(this.cameras.main.width / 2, this.cameras.main.height / 2, 'ui:intro_bg').setOrigin(0.5)
+        const bgScale = Math.max(
+          this.cameras.main.width / bg.width,
+          this.cameras.main.height / bg.height
+        )
+        bg.setScale(bgScale)
+
+        const panelWidth = Math.min(520, this.cameras.main.width - 40)
+        const panelHeight = 220
+        const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x020617, 0.88)
+        panel.setStrokeStyle(1, 0x1d283a)
+
+        const title = this.add.text(centerX, panel.y - panelHeight / 2 + 26, 'Prepare for your run', {
+          fontFamily: 'sans-serif',
+          fontSize: '26px',
+          color: '#e5e7ff'
+        }).setOrigin(0.5, 0.5)
+        title.setShadow(0, 2, '#000000', 4, false, true)
+
         const tipLines = [
-          'Tip: Equip items before starting to bring them into your run.',
+          'Equip items before starting to bring them into your run.',
           'Equipping does not remove items from inventory.',
           'If you die, equipped items are not lost and can be used again.',
           'You have 3 lives per run.'
         ]
-        this.add.text(centerX, centerY - 30, tipLines.join('\n'), { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', align: 'center' }).setOrigin(0.5, 0)
-        const startBtn = this.add.text(centerX, centerY + 60, 'Start Run ▶', { fontFamily: 'sans-serif', fontSize: '16px', color: '#ffffff', backgroundColor: '#22c55e' }).setPadding(8, 6, 8, 6).setOrigin(0.5)
-        startBtn.setInteractive({ useHandCursor: true })
-        startBtn.on('pointerdown', async () => {
-          startBtn.disableInteractive().setAlpha(0.6)
+        const tips = this.add.text(centerX, title.y + 22, tipLines.join('\n'), {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: '#c7d2fe',
+          align: 'center'
+        }).setOrigin(0.5, 0)
+        tips.setShadow(0, 1, '#020617', 3, false, true)
+
+        const btnY = panel.y + panelHeight / 2 - 40
+        const btnW = 180
+        const btnH = 40
+        const btnBg = this.add.rectangle(centerX, btnY, btnW, btnH, 0x22c55e, 1)
+        btnBg.setStrokeStyle(1, 0x15803d)
+        btnBg.setOrigin(0.5)
+
+        const btnLabel = this.add.text(centerX, btnY, 'Start Run ▶', {
+          fontFamily: 'sans-serif',
+          fontSize: '18px',
+          color: '#ffffff'
+        }).setOrigin(0.5)
+
+        const btnZone = this.add.zone(centerX, btnY, btnW, btnH).setOrigin(0.5)
+        btnZone.setInteractive({ useHandCursor: true })
+
+        const setBtnState = (state: 'idle' | 'hover' | 'pressed' | 'disabled') => {
+          if (state === 'idle') {
+            btnBg.fillColor = 0x22c55e
+            btnBg.alpha = 1
+            btnLabel.setColor('#ffffff')
+            btnLabel.setScale(1)
+          } else if (state === 'hover') {
+            btnBg.fillColor = 0x16a34a
+            btnBg.alpha = 1
+            btnLabel.setColor('#f9fafb')
+            btnLabel.setScale(1.04)
+          } else if (state === 'pressed') {
+            btnBg.fillColor = 0x16a34a
+            btnBg.alpha = 0.95
+            btnLabel.setColor('#e5e7eb')
+            btnLabel.setScale(0.98)
+          } else if (state === 'disabled') {
+            btnBg.fillColor = 0x16a34a
+            btnBg.alpha = 0.65
+            btnLabel.setColor('#e5e7eb')
+            btnLabel.setScale(0.98)
+          }
+        }
+
+        setBtnState('idle')
+
+        btnZone.on('pointerover', () => setBtnState('hover'))
+        btnZone.on('pointerout', () => setBtnState('idle'))
+        btnZone.on('pointerdown', () => setBtnState('pressed'))
+        btnZone.on('pointerup', async () => {
+          setBtnState('disabled')
+          btnZone.disableInteractive()
           await gameManager.startRun()
           this.scene.restart()
         })
+
         return
       }
 
