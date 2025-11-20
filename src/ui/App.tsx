@@ -44,6 +44,7 @@ export function App(): JSX.Element {
   const [autoPlay, setAutoPlay] = useState<boolean>(true)
   const [autoPlayProgress, setAutoPlayProgress] = useState<number>(0)
   const [autoPlayCooling, setAutoPlayCooling] = useState<boolean>(false)
+  const [autoPlaySpeed, setAutoPlaySpeed] = useState<0.5 | 1 | 1.5>(1)
   const [deathSummary, setDeathSummary] = useState<DeathSummary | null>(null)
   const [deathSummaryPhase, setDeathSummaryPhase] = useState<'idle' | 'enter' | 'visible' | 'exit'>('idle')
 
@@ -113,7 +114,9 @@ export function App(): JSX.Element {
       } else {
         if (phase === 'running') {
           acc += dt
-          const actionMs = runStats.stageType === 'unique' ? UNIQUE_ACTION_MS : BASE_ACTION_MS
+          const baseMs = runStats.stageType === 'unique' ? UNIQUE_ACTION_MS : BASE_ACTION_MS
+          const speed = autoPlaySpeed || 1
+          const actionMs = baseMs / speed
           const clamped = Math.min(actionMs, acc)
           setAutoPlayCooling(false)
           setAutoPlayProgress(clamped / actionMs)
@@ -145,7 +148,7 @@ export function App(): JSX.Element {
     return () => {
       if (frame != null) window.cancelAnimationFrame(frame)
     }
-  }, [autoPlay, runStats.lives, runStats.stageIndex, runStats.stageType])
+  }, [autoPlay, autoPlaySpeed, runStats.lives, runStats.stageIndex, runStats.stageType])
 
 
   // Poll GameManager for current run info to show in Stats panel
@@ -316,6 +319,44 @@ export function App(): JSX.Element {
     }, 160)
   }
 
+  // Global Escape shortcut: close any open popup in a sensible priority order
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || (target as any).isContentEditable)) {
+        return
+      }
+      // Close death summary first if visible
+      if (hasDeathSummary) {
+        e.preventDefault()
+        closeDeathSummary()
+        return
+      }
+      // Then item info modal
+      if (itemModalId) {
+        e.preventDefault()
+        setItemModalId(null)
+        return
+      }
+      // Then account modal
+      if (openAccount) {
+        e.preventDefault()
+        setOpenAccount(false)
+        return
+      }
+      // Then player card modal
+      if (openCard) {
+        e.preventDefault()
+        setOpenCard(false)
+        setOpenCardUserId(null)
+        return
+      }
+    }
+    window.addEventListener('keydown', onKeyDown as unknown as EventListener)
+    return () => window.removeEventListener('keydown', onKeyDown as unknown as EventListener)
+  }, [hasDeathSummary, itemModalId, openAccount, openCard])
+
   return (
     <div style={{ display: 'grid', gridTemplateRows: '48px 1fr auto', minHeight: '100vh', background: '#0b0e1a', color: '#e5e7ff', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', background: '#101531', borderBottom: '1px solid #1f2447' }}>
@@ -405,8 +446,8 @@ export function App(): JSX.Element {
                 <span>Auto-Play</span>
                 <span style={{ fontSize: 11, opacity: 0.8 }}>{autoPlay ? 'On' : 'Off'}</span>
               </button>
-              <div style={{ flex: 1, maxWidth: 220, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, height: 8, borderRadius: 999, background: '#111633', border: '1px solid #243057', overflow: 'hidden', position: 'relative' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <div style={{ width: 240, maxWidth: '100%', height: 8, borderRadius: 999, background: '#111633', border: '1px solid #243057', overflow: 'hidden', position: 'relative' }}>
                   <div
                     style={{
                       position: 'absolute',
@@ -418,6 +459,46 @@ export function App(): JSX.Element {
                       opacity: autoPlay ? 1 : 0.45,
                     }}
                   />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: '#9db0ff', flexShrink: 0 }}>
+                  {([0.5, 1, 1.5] as const).map((v) => {
+                    const locked = v === 1.5
+                    const active = autoPlaySpeed === v
+                    const label = `${v}x`
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        disabled={locked}
+                        onClick={() => { if (!locked) setAutoPlaySpeed(v) }}
+                        className="hover-chip"
+                        style={{
+                          minWidth: 40,
+                          height: 22,
+                          borderRadius: 999,
+                          border: active ? '1px solid #4f46e5' : '1px solid #1f2937',
+                          background: locked
+                            ? '#020617'
+                            : active
+                              ? 'linear-gradient(135deg,#4f46e5,#6366f1)'
+                              : '#0b1024',
+                          color: locked ? '#6b7280' : active ? '#e5e7ff' : '#c7d2fe',
+                          opacity: locked ? 0.6 : 1,
+                          cursor: locked ? 'not-allowed' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: '0 8px',
+                          gap: 4,
+                          fontSize: 11,
+                          boxShadow: active ? '0 0 10px rgba(79,70,229,0.6)' : 'none',
+                        }}
+                      >
+                        <span>{label}</span>
+                        {locked && <span style={{ fontSize: 10 }}>🔒</span>}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -897,48 +978,94 @@ export function App(): JSX.Element {
                   <div style={{ fontSize: 13, color: '#e5e7ff', lineHeight: 1.5 }}>{def?.description ?? 'No description'}</div>
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 }}>
                       {canEquip ? (
-                        <button onClick={async () => {
-                          const ok = await equipItem(itemModalId, 1)
-                          if (ok) {
-                            setLoadout((prev) => ({ ...prev, [itemModalId]: (prev[itemModalId] ?? 0) + 1 }))
-                            showToast(`${def?.name ?? itemModalId} equipped to loadout`)
-                          }
-                          setItemModalId(null)
-                        }}
-                        className="hover-chip"
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1f5a37' }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#194a2a' }}
-                        onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)' }}
-                        onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.0)' }}
-                        style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #2f5d3d', background: '#194a2a', color: '#c8ffda', transition: 'transform 80ms ease, background 120ms ease' }}
-                        >
-                          Equip
-                        </button>
+                        <>
+                          <button onClick={async () => {
+                            const ok = await equipItem(itemModalId, 1)
+                            if (ok) {
+                              setLoadout((prev) => ({ ...prev, [itemModalId]: (prev[itemModalId] ?? 0) + 1 }))
+                              showToast(`${def?.name ?? itemModalId} equipped to loadout`)
+                            }
+                            setItemModalId(null)
+                          }}
+                          className="hover-chip"
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1f5a37' }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#194a2a' }}
+                          onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)' }}
+                          onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.0)' }}
+                          style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #2f5d3d', background: '#194a2a', color: '#c8ffda', transition: 'transform 80ms ease, background 120ms ease' }}
+                          >
+                            Equip
+                          </button>
+                          <button onClick={async () => {
+                            if (available <= 0) { setItemModalId(null); return }
+                            const amount = available
+                            const ok = await equipItem(itemModalId, amount)
+                            if (ok) {
+                              setLoadout((prev) => ({ ...prev, [itemModalId]: (prev[itemModalId] ?? 0) + amount }))
+                              showToast(`${def?.name ?? itemModalId} equipped to loadout x${amount}`)
+                            }
+                            setItemModalId(null)
+                          }}
+                          className="hover-chip"
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1f5a37' }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#194a2a' }}
+                          onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)' }}
+                          onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.0)' }}
+                          style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #2f5d3d', background: '#14532d', color: '#c8ffda', transition: 'transform 80ms ease, background 120ms ease' }}
+                          >
+                            Equip All
+                          </button>
+                        </>
                       ) : (
-                        <button onClick={async () => {
-                          if (!canUnequip) return
-                          const ok = await decrementLoadout(itemModalId, 1)
-                          if (ok) {
-                            setLoadout((prev) => {
-                              const next = { ...prev }
-                              const curr = next[itemModalId] ?? 0
-                              if (curr - 1 <= 0) delete next[itemModalId]
-                              else next[itemModalId] = curr - 1
-                              return next
-                            })
-                            showToast(`${def?.name ?? itemModalId} unequipped`)
-                          }
-                          setItemModalId(null)
-                        }}
-                        className="hover-chip"
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#4a1a1a' }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#3a1515' }}
-                        onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)' }}
-                        onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.0)' }}
-                        style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #5a2f2f', background: '#3a1515', color: '#ffd1d1', transition: 'transform 80ms ease, background 120ms ease', opacity: canUnequip ? 1 : 0.6, cursor: canUnequip ? 'pointer' : 'not-allowed' }}
-                        >
-                          Unequip
-                        </button>
+                        <>
+                          <button onClick={async () => {
+                            if (!canUnequip) return
+                            const ok = await decrementLoadout(itemModalId, 1)
+                            if (ok) {
+                              setLoadout((prev) => {
+                                const next = { ...prev }
+                                const curr = next[itemModalId] ?? 0
+                                if (curr - 1 <= 0) delete next[itemModalId]
+                                else next[itemModalId] = curr - 1
+                                return next
+                              })
+                              showToast(`${def?.name ?? itemModalId} unequipped`)
+                            }
+                            setItemModalId(null)
+                          }}
+                          className="hover-chip"
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#4a1a1a' }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#3a1515' }}
+                          onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)' }}
+                          onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.0)' }}
+                          style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #5a2f2f', background: '#3a1515', color: '#ffd1d1', transition: 'transform 80ms ease, background 120ms ease', opacity: canUnequip ? 1 : 0.6, cursor: canUnequip ? 'pointer' : 'not-allowed' }}
+                          >
+                            Unequip
+                          </button>
+                          <button onClick={async () => {
+                            if (!canUnequip || equipped <= 0) { setItemModalId(null); return }
+                            const amount = equipped
+                            const ok = await decrementLoadout(itemModalId, amount)
+                            if (ok) {
+                              setLoadout((prev) => {
+                                const next = { ...prev }
+                                delete next[itemModalId]
+                                return next
+                              })
+                              showToast(`${def?.name ?? itemModalId} unequipped x${amount}`)
+                            }
+                            setItemModalId(null)
+                          }}
+                          className="hover-chip"
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#4a1a1a' }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#3a1515' }}
+                          onMouseDown={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(0.98)' }}
+                          onMouseUp={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.0)' }}
+                          style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #7f1d1d', background: '#450a0a', color: '#ffe4e6', transition: 'transform 80ms ease, background 120ms ease', opacity: canUnequip ? 1 : 0.6, cursor: canUnequip ? 'pointer' : 'not-allowed' }}
+                          >
+                            Unequip All
+                          </button>
+                        </>
                       )}
                   </div>
                 </div>

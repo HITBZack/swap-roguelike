@@ -202,7 +202,7 @@ const baseChoices: ChoiceOption[] = [
       const rng = fromSeed(`${seed}|choice|${stageNumber}|cache`)
       const items = cloneRunItems(runItems)
       const log: string[] = []
-      const n = int(rng, 1, 2)
+      const n = int(rng, 1, 3)
       const raw = pickRandomRegistryItemId(rng, n)
       const picks = Array.isArray(raw) ? raw : [raw]
       for (const pid of picks) items.push({ id: pid, stacks: 1 })
@@ -241,11 +241,19 @@ export function pickChoiceOptions(seed: string, stageNumber: number, opts?: { bi
   // Rare gnome boss-lair option (~5% chance per choice stage), only after the first two biomes
   const gnomeIdx = pool.findIndex(o => o.id === 'gnome_boss_lair')
   const biomeIndex = typeof opts?.biomeIndex === 'number' ? opts.biomeIndex : 0
-  if (gnomeIdx >= 0 && biomeIndex >= 2) {
-    const roll = rng.next()
-    if (roll < 0.05) {
-      const gnome = pool.splice(gnomeIdx, 1)[0]
-      picked.push(gnome)
+  if (gnomeIdx >= 0) {
+    if (biomeIndex >= 2) {
+      const roll = rng.next()
+      if (roll < 0.05) {
+        const gnome = pool.splice(gnomeIdx, 1)[0]
+        picked.push(gnome)
+      } else {
+        // Even on a miss, remove from pool so it cannot appear as a normal choice
+        pool.splice(gnomeIdx, 1)
+      }
+    } else {
+      // Before biome 2, remove from pool entirely so it can never appear
+      pool.splice(gnomeIdx, 1)
     }
   }
 

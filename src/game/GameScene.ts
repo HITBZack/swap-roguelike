@@ -170,7 +170,8 @@ export class GameScene extends Phaser.Scene {
           } else if (state === 'disabled') {
             btnImg.setScale(baseScale * 0.96)
             btnImg.setTint(0x9ca3af)
-            glow.setAlpha(0.2)
+            // Hide glow fully in disabled state so we don't visually suggest two buttons
+            glow.setAlpha(0)
           }
         }
 
@@ -745,7 +746,7 @@ export class GameScene extends Phaser.Scene {
           // When the final step has been revealed, bossSteps will be cleared by the combat
           return
         }
-        if (!canAutoAdvance || !goNextStage) return
+        if (!canAutoAdvance || !goNextStage || isAdvancingStage) return
         goNextStage()
       }
       if (typeof window !== 'undefined') {
@@ -865,6 +866,8 @@ export class GameScene extends Phaser.Scene {
                 }
                 // After boss victory, allow advancing
                 goNextStage = async () => {
+                  if (isAdvancingStage) return
+                  isAdvancingStage = true
                   canAutoAdvance = false
                   bossSteps = null
                   bossHpBarFill = null
@@ -924,6 +927,8 @@ export class GameScene extends Phaser.Scene {
                 }
                 // If still have lives, treat as normal loss and allow restarting from next stage
                 goNextStage = async () => {
+                  if (isAdvancingStage) return
+                  isAdvancingStage = true
                   canAutoAdvance = false
                   bossSteps = null
                   bossHpBarFill = null
@@ -1036,7 +1041,8 @@ export class GameScene extends Phaser.Scene {
                 return
               }
             }
-            // After resolution, show Next Stage button and allow advancing
+            // After resolution, show Next Stage button and allow advancing.
+            // tweenEnemyAndAdvance already guards on isAdvancingStage, so we don't duplicate it here.
             goNextStage = async () => {
               canAutoAdvance = false
               await tweenEnemyAndAdvance()
@@ -1064,6 +1070,35 @@ export class GameScene extends Phaser.Scene {
         // Position higher so bottom Start/Next slots remain untouched
         const btnYStart = centerY - 24
         const spacing = 32
+
+        // Description box for hovered choice
+        const descWidth = Math.min(420 * sFrame, this.cameras.main.width - 40)
+        const descY = btnYStart + Math.max(choiceOptions.length, 2) * spacing + 12
+        const descBg = this.add.rectangle(centerX, descY, descWidth, 52, 0x020617, 0.9)
+          .setOrigin(0.5)
+          .setDepth(110)
+        descBg.setStrokeStyle(1, 0x1f2937)
+        descBg.setAlpha(0)
+        const descText = this.add.text(centerX - descWidth / 2 + 10, descY - 18, 'Hover a choice to see details', {
+          fontFamily: 'sans-serif',
+          fontSize: '12px',
+          color: '#cbd5f5',
+          wordWrap: { width: descWidth - 20 },
+        }).setOrigin(0, 0).setDepth(111)
+        descText.setAlpha(0)
+
+        const showChoiceDescription = (text: string) => {
+          descText.setText(text)
+          if (descBg.alpha < 1 || descText.alpha < 1) {
+            this.tweens.add({
+              targets: [descBg, descText],
+              alpha: 1,
+              duration: 160,
+              ease: 'Quad.out',
+            })
+          }
+        }
+
         const buttons: Phaser.GameObjects.Text[] = choiceOptions.map((opt: any, i: number) => {
           const btn = this.add.text(centerX, btnYStart + i * spacing, `${opt.title}`, { fontFamily: 'sans-serif', fontSize: '14px', color: '#cfe1ff', backgroundColor: '#101531' }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(120)
           btn.setInteractive({ useHandCursor: true })
@@ -1078,7 +1113,12 @@ export class GameScene extends Phaser.Scene {
             ease: 'Quad.out',
             delay: i * 30
           })
-          btn.on('pointerover', () => { btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff) })
+          btn.on('pointerover', () => {
+            btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff)
+            if (opt.description) {
+              showChoiceDescription(opt.description)
+            }
+          })
           btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
           btn.on('pointerdown', async () => {
             // disable all buttons to avoid double-choose
@@ -1123,11 +1163,27 @@ export class GameScene extends Phaser.Scene {
                       try {
                         const prog = gameManager.getBiomeProgress()
                         const stageIdx = prog.stageIndex ?? 0
-                        const xp = Math.max(0, 10 + stageIdx * 5)
-                        const xpRes = await addMyXp(xp)
+                        const xpGained = Math.max(0, 10 + stageIdx * 5)
+                        const xpRes = await addMyXp(xpGained)
                         await incMyDeaths(1)
+                        const metrics = gameManager.getRunMetrics()
+                        const run = gameManager.getRun()
+                        const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
                         if (typeof window !== 'undefined') {
                           window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                          window.dispatchEvent(new CustomEvent('game:run-ended', {
+                            detail: {
+                              reason: 'death',
+                              xpGained,
+                              level: xpRes?.level,
+                              xp: xpRes?.xp,
+                              metrics,
+                              seed: run?.seed,
+                              biomeId: stage?.biomeId,
+                              stageIndex: run?.stageIndex,
+                              biomesCompleted,
+                            }
+                          }))
                         }
                       } catch {}
                       await completeRunAndMaybeReward()
@@ -1164,6 +1220,8 @@ export class GameScene extends Phaser.Scene {
               return img
             }
             goNextStage = async () => {
+              if (isAdvancingStage) return
+              isAdvancingStage = true
               canAutoAdvance = false
               await gameManager.advance()
               this.scene.restart()
@@ -1217,6 +1275,8 @@ export class GameScene extends Phaser.Scene {
               const cur2 = logBuffer ? `${logBuffer}\n` : ''
               updateLog(cur2 + 'You have no items to duplicate.')
               goNextStage = async () => {
+                if (isAdvancingStage) return
+                isAdvancingStage = true
                 canAutoAdvance = false
                 await gameManager.advance()
                 this.scene.restart()
@@ -1284,6 +1344,8 @@ export class GameScene extends Phaser.Scene {
                 updateLog(cur3 + `The pedestal hums. Your ${rec.id} is duplicated.`)
                 destroyModal()
                 goNextStage = async () => {
+                  if (isAdvancingStage) return
+                  isAdvancingStage = true
                   canAutoAdvance = false
                   await gameManager.advance()
                   that.scene.restart()
@@ -1308,6 +1370,8 @@ export class GameScene extends Phaser.Scene {
             const closeAll = () => {
               destroyModal()
               goNextStage = async () => {
+                if (isAdvancingStage) return
+                isAdvancingStage = true
                 canAutoAdvance = false
                 await gameManager.advance()
                 this.scene.restart()
@@ -1390,6 +1454,8 @@ export class GameScene extends Phaser.Scene {
             const finalizeChoice = async () => {
               destroyModal()
               goNextStage = async () => {
+                if (isAdvancingStage) return
+                isAdvancingStage = true
                 canAutoAdvance = false
                 await gameManager.advance()
                 that.scene.restart()
@@ -1531,6 +1597,8 @@ export class GameScene extends Phaser.Scene {
           }
         } else {
           goNextStage = async () => {
+            if (isAdvancingStage) return
+            isAdvancingStage = true
             canAutoAdvance = false
             await gameManager.advance()
             this.scene.restart()
