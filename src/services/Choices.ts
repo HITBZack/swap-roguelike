@@ -230,17 +230,18 @@ export const choiceRegistry: ChoiceOption[] = baseChoices.map(c => {
   return { ...c, title: meta.title || c.title, description: meta.description || c.description, tags: meta.tags.length ? meta.tags : c.tags, linkedGroups: meta.linkedGroups.length ? meta.linkedGroups : c.linkedGroups }
 })
 
-export function pickChoiceOptions(seed: string, stageNumber: number, _count = 3): ChoiceOption[] {
+export function pickChoiceOptions(seed: string, stageNumber: number, opts?: { biomeIndex?: number; count?: number }): ChoiceOption[] {
   const rng = fromSeed(`${seed}|choice|${stageNumber}`)
   const pool = [...choiceRegistry]
   const picked: ChoiceOption[] = []
   if (pool.length === 0) return picked
   // Roll how many options to show (2 or 3)
-  const target = int(rng, 2, 3)
+  const target = opts?.count ?? int(rng, 2, 3)
 
-  // Rare gnome boss-lair option (~5% chance per choice stage)
+  // Rare gnome boss-lair option (~5% chance per choice stage), only after the first two biomes
   const gnomeIdx = pool.findIndex(o => o.id === 'gnome_boss_lair')
-  if (gnomeIdx >= 0) {
+  const biomeIndex = typeof opts?.biomeIndex === 'number' ? opts.biomeIndex : 0
+  if (gnomeIdx >= 0 && biomeIndex >= 2) {
     const roll = rng.next()
     if (roll < 0.05) {
       const gnome = pool.splice(gnomeIdx, 1)[0]

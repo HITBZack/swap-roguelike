@@ -25,7 +25,7 @@ type DeathSummary = {
   metrics: { enemiesKilled: number; minibosses: number; bosses: number; itemsGained: number }
 }
 
-const itemImageUrls = import.meta.glob<string>('../assets/item_images/*.png', { eager: true, as: 'url' })
+const itemImageUrls = import.meta.glob<string>('../assets/item_images/*.png', { eager: true, query: '?url', import: 'default' })
 
 export function App(): JSX.Element {
   const [email, setEmail] = useState<string>('')
@@ -45,6 +45,7 @@ export function App(): JSX.Element {
   const [autoPlayProgress, setAutoPlayProgress] = useState<number>(0)
   const [autoPlayCooling, setAutoPlayCooling] = useState<boolean>(false)
   const [deathSummary, setDeathSummary] = useState<DeathSummary | null>(null)
+  const [deathSummaryPhase, setDeathSummaryPhase] = useState<'idle' | 'enter' | 'visible' | 'exit'>('idle')
 
   const itemIconMap = useMemo(() => {
     const entries = Object.entries(itemImageUrls).map(([p, url]) => {
@@ -66,6 +67,10 @@ export function App(): JSX.Element {
       const detail = (e as CustomEvent<DeathSummary>).detail
       if (!detail || typeof detail.xpGained !== 'number') return
       setDeathSummary(detail)
+      setDeathSummaryPhase('enter')
+      window.setTimeout(() => {
+        setDeathSummaryPhase('visible')
+      }, 0)
     }
     window.addEventListener('game:run-ended', onRunEnded as EventListener)
     return () => {
@@ -298,6 +303,18 @@ export function App(): JSX.Element {
 
   const clampedAutoPlayProgress = Math.max(0, Math.min(1, autoPlayProgress))
   const visualAutoPlayProgress = clampedAutoPlayProgress < 0.03 ? 0 : clampedAutoPlayProgress
+
+  const hasDeathSummary = deathSummary != null && deathSummaryPhase !== 'idle'
+
+  const closeDeathSummary = () => {
+    if (!deathSummary) return
+    if (deathSummaryPhase === 'exit') return
+    setDeathSummaryPhase('exit')
+    window.setTimeout(() => {
+      setDeathSummary(null)
+      setDeathSummaryPhase('idle')
+    }, 160)
+  }
 
   return (
     <div style={{ display: 'grid', gridTemplateRows: '48px 1fr auto', minHeight: '100vh', background: '#0b0e1a', color: '#e5e7ff', fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -675,8 +692,9 @@ export function App(): JSX.Element {
       )}
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />
       <UsernameModal open={Boolean(needUsername)} />
-      {deathSummary && (
+      {hasDeathSummary && deathSummary && (
         <div
+          className={deathSummaryPhase === 'exit' ? 'anim-fade-out' : 'anim-fade-in'}
           style={{
             position: 'fixed',
             inset: 0,
@@ -688,6 +706,7 @@ export function App(): JSX.Element {
           }}
         >
           <div
+            className={deathSummaryPhase === 'exit' ? 'anim-fade-out' : 'anim-scale-in'}
             style={{
               width: 520,
               maxWidth: '96vw',
@@ -729,22 +748,22 @@ export function App(): JSX.Element {
                     <span>{deathSummary.seed ? ' • ' : ''}Biomes completed: {deathSummary.biomesCompleted}</span>
                   )}
                 </div>
+                <button
+                  onClick={closeDeathSummary}
+                  className="hover-chip"
+                  style={{
+                    fontSize: 11,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    border: '1px solid #4b5563',
+                    background: 'transparent',
+                    color: '#e5e7ff',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Continue
+                </button>
               </div>
-              <button
-                onClick={() => setDeathSummary(null)}
-                className="hover-chip"
-                style={{
-                  fontSize: 11,
-                  padding: '4px 10px',
-                  borderRadius: 999,
-                  border: '1px solid #4b5563',
-                  background: 'transparent',
-                  color: '#e5e7ff',
-                  cursor: 'pointer',
-                }}
-              >
-                Continue
-              </button>
             </div>
 
             <div
@@ -816,7 +835,7 @@ export function App(): JSX.Element {
                 Tip: Equip items in the right panel between runs to change your build.
               </span>
               <button
-                onClick={() => setDeathSummary(null)}
+                onClick={closeDeathSummary}
                 className="hover-chip"
                 style={{
                   padding: '4px 10px',

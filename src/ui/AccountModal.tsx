@@ -26,7 +26,7 @@ export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.E
   // Discover available character models (same folder GameScene uses)
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore
-  const characterUrls = import.meta.glob('../assets/character_models/*.png', { eager: true, as: 'url' }) as Record<string, string>
+  const characterUrls = import.meta.glob('../assets/character_models/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
   const spriteOptions = useMemo(() => {
     const entries = Object.entries(characterUrls).map(([path, url]) => {
       const fname = path.split('/').pop() as string

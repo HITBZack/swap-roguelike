@@ -42,7 +42,7 @@ function assignBiomes(id: string): string[] {
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
-const enemyUrls = import.meta.glob('../../assets/enemies/*.png', { eager: true, as: 'url' }) as Record<string, string>
+const enemyUrls = import.meta.glob('../../assets/enemies/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
 
 const defs: EnemyDef[] = []
 Object.keys(enemyUrls).forEach((path) => {

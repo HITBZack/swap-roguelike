@@ -9,6 +9,12 @@ import teacookiesUrl from '../assets/scene_art/teacookies.png?url'
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import introBackgroundUrl from '../assets/scene_art/intro_background.jpg?url'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import pillarUrl from '../assets/scene_art/pillar.png?url'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import startRunBtnUrl from '../assets/ui/startrunbtn.png?url'
 import { type AppState, useAppState } from '../lib/state'
 import { gameManager } from '../services/GameManager'
 import type { StagePlan } from '../services/GameManager'
@@ -37,12 +43,14 @@ export class GameScene extends Phaser.Scene {
     // Frame
     this.load.image('ui:game_frame', gameViewStructureUrl)
     this.load.image('unique:teacookies', teacookiesUrl)
+    this.load.image('unique:pillar', pillarUrl)
     this.load.image('ui:intro_bg', introBackgroundUrl)
+    this.load.image('ui:start_run', startRunBtnUrl)
 
     // Discover enemies and player models via Vite glob imports
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
-    const enemyUrls = import.meta.glob('../assets/enemies/*.png', { eager: true, as: 'url' }) as Record<string, string>
+    const enemyUrls = import.meta.glob('../assets/enemies/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
     this.enemyKeys = []
     Object.entries(enemyUrls).forEach(([path, url]) => {
       const fname = path.split('/').pop() as string
@@ -52,7 +60,7 @@ export class GameScene extends Phaser.Scene {
     })
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
-    const playerUrls = import.meta.glob('../assets/character_models/*.png', { eager: true, as: 'url' }) as Record<string, string>
+    const playerUrls = import.meta.glob('../assets/character_models/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
     this.playerKeys = []
     Object.entries(playerUrls).forEach(([path, url]) => {
       const fname = path.split('/').pop() as string
@@ -62,7 +70,7 @@ export class GameScene extends Phaser.Scene {
     })
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
-    const itemUrls = import.meta.glob('../assets/item_images/*.png', { eager: true, as: 'url' }) as Record<string, string>
+    const itemUrls = import.meta.glob('../assets/item_images/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>
     Object.entries(itemUrls).forEach(([path, url]) => {
       const fname = path.split('/').pop() as string
       const key = `item:${fname.replace(/\.png$/i, '').toLowerCase()}`
@@ -88,6 +96,7 @@ export class GameScene extends Phaser.Scene {
     // Autoplay integration: allow React UI to request an automatic Next Stage when safe
     let goNextStage: (() => void) | null = null
     let canAutoAdvance = false
+    let isAdvancingStage = false
     // Note: autoplay listener now lives inside the async run block so it can see boss/log state
 
     ;(async () => {
@@ -95,7 +104,9 @@ export class GameScene extends Phaser.Scene {
       let run = await gameManager.resumeRun()
       if (!run) {
         // Pre-run screen with explanation and Start button
-        const bg = this.add.image(this.cameras.main.width / 2, this.cameras.main.height / 2, 'ui:intro_bg').setOrigin(0.5)
+        const sceneCenterX = this.cameras.main.width / 2
+        const sceneCenterY = this.cameras.main.height / 2
+        const bg = this.add.image(sceneCenterX, sceneCenterY, 'ui:intro_bg').setOrigin(0.5)
         const bgScale = Math.max(
           this.cameras.main.width / bg.width,
           this.cameras.main.height / bg.height
@@ -104,10 +115,10 @@ export class GameScene extends Phaser.Scene {
 
         const panelWidth = Math.min(520, this.cameras.main.width - 40)
         const panelHeight = 220
-        const panel = this.add.rectangle(centerX, centerY, panelWidth, panelHeight, 0x020617, 0.88)
+        const panel = this.add.rectangle(sceneCenterX, sceneCenterY, panelWidth, panelHeight, 0x020617, 0.88)
         panel.setStrokeStyle(1, 0x1d283a)
 
-        const title = this.add.text(centerX, panel.y - panelHeight / 2 + 26, 'Prepare for your run', {
+        const title = this.add.text(sceneCenterX, panel.y - panelHeight / 2 + 26, 'Prepare for your run', {
           fontFamily: 'sans-serif',
           fontSize: '26px',
           color: '#e5e7ff'
@@ -120,7 +131,7 @@ export class GameScene extends Phaser.Scene {
           'If you die, equipped items are not lost and can be used again.',
           'You have 3 lives per run.'
         ]
-        const tips = this.add.text(centerX, title.y + 22, tipLines.join('\n'), {
+        const tips = this.add.text(sceneCenterX, title.y + 22, tipLines.join('\n'), {
           fontFamily: 'monospace',
           fontSize: '13px',
           color: '#c7d2fe',
@@ -128,56 +139,97 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5, 0)
         tips.setShadow(0, 1, '#020617', 3, false, true)
 
-        const btnY = panel.y + panelHeight / 2 - 40
-        const btnW = 180
-        const btnH = 40
-        const btnBg = this.add.rectangle(centerX, btnY, btnW, btnH, 0x22c55e, 1)
-        btnBg.setStrokeStyle(1, 0x15803d)
-        btnBg.setOrigin(0.5)
+        const btnY = panel.y + panelHeight / 2 - 46
+        const btnImg = this.add.image(sceneCenterX, btnY, 'ui:start_run').setOrigin(0.5)
+        const baseScaleRaw = panelWidth / (btnImg.width * 1.6)
+        const baseScale = baseScaleRaw * 0.72
+        btnImg.setScale(baseScale)
 
-        const btnLabel = this.add.text(centerX, btnY, 'Start Run ▶', {
-          fontFamily: 'sans-serif',
-          fontSize: '18px',
-          color: '#ffffff'
-        }).setOrigin(0.5)
+        const glow = this.add.image(btnImg.x, btnImg.y, 'ui:start_run').setOrigin(0.5)
+        glow.setScale(baseScale * 1.08)
+        glow.setBlendMode(Phaser.BlendModes.ADD)
+        glow.setTint(0x99ccff)
+        glow.setAlpha(0)
 
-        const btnZone = this.add.zone(centerX, btnY, btnW, btnH).setOrigin(0.5)
-        btnZone.setInteractive({ useHandCursor: true })
+        const btnZone = this.add.zone(btnImg.x, btnImg.y, btnImg.width * baseScale, btnImg.height * baseScale)
+          .setOrigin(0.5)
 
         const setBtnState = (state: 'idle' | 'hover' | 'pressed' | 'disabled') => {
           if (state === 'idle') {
-            btnBg.fillColor = 0x22c55e
-            btnBg.alpha = 1
-            btnLabel.setColor('#ffffff')
-            btnLabel.setScale(1)
+            btnImg.setScale(baseScale)
+            btnImg.clearTint()
+            glow.setAlpha(0)
           } else if (state === 'hover') {
-            btnBg.fillColor = 0x16a34a
-            btnBg.alpha = 1
-            btnLabel.setColor('#f9fafb')
-            btnLabel.setScale(1.04)
+            btnImg.setScale(baseScale * 1.06)
+            btnImg.setTint(0xbfd6ff)
+            glow.setAlpha(0.4)
           } else if (state === 'pressed') {
-            btnBg.fillColor = 0x16a34a
-            btnBg.alpha = 0.95
-            btnLabel.setColor('#e5e7eb')
-            btnLabel.setScale(0.98)
+            btnImg.setScale(baseScale * 0.96)
+            btnImg.setTint(0xd7e6ff)
+            glow.setAlpha(0.55)
           } else if (state === 'disabled') {
-            btnBg.fillColor = 0x16a34a
-            btnBg.alpha = 0.65
-            btnLabel.setColor('#e5e7eb')
-            btnLabel.setScale(0.98)
+            btnImg.setScale(baseScale * 0.96)
+            btnImg.setTint(0x9ca3af)
+            glow.setAlpha(0.2)
           }
         }
 
-        setBtnState('idle')
+        let started = false
 
-        btnZone.on('pointerover', () => setBtnState('hover'))
-        btnZone.on('pointerout', () => setBtnState('idle'))
-        btnZone.on('pointerdown', () => setBtnState('pressed'))
-        btnZone.on('pointerup', async () => {
+        const startRun = async () => {
+          if (started) return
+          started = true
           setBtnState('disabled')
           btnZone.disableInteractive()
-          await gameManager.startRun()
-          this.scene.restart()
+          const cam = this.cameras.main
+          cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+            void (async () => {
+              await gameManager.startRun()
+              this.scene.restart()
+            })()
+          })
+          cam.fadeOut(180, 0, 0, 0)
+        }
+
+        btnZone.on('pointerover', () => { if (!started) setBtnState('hover') })
+        btnZone.on('pointerout', () => { if (!started) setBtnState('idle') })
+        btnZone.on('pointerdown', () => { if (!started) setBtnState('pressed') })
+        btnZone.on('pointerup', () => { void startRun() })
+
+        const keyboard = this.input.keyboard
+        const enterKey = keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER, false)
+        if (enterKey) {
+          enterKey.on('down', () => { void startRun() })
+        }
+
+        // Simple intro animation: fade/slide panel group in from below
+        const panelTargets: Phaser.GameObjects.GameObject[] = [panel, title, tips, btnImg]
+        panelTargets.forEach(obj => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const o = obj as any
+          o.setAlpha(0)
+          o.y += 12
+        })
+        this.tweens.add({
+          targets: panelTargets,
+          alpha: 1,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          y: '-=12' as any,
+          duration: 260,
+          ease: 'Quad.out',
+          delay: 40,
+          onComplete: () => {
+            if (!started) {
+              setBtnState('idle')
+            }
+            btnZone.setInteractive({ useHandCursor: true })
+          }
+        })
+
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+          if (enterKey) {
+            enterKey.destroy()
+          }
         })
 
         return
@@ -201,7 +253,9 @@ export class GameScene extends Phaser.Scene {
       let selectedEnemyIsBlessed = false
       let selectedEnemyIsBoss = false
       if (stage?.type === 'combat' && stage.combatType) {
-        this.add.text(this.cameras.main.width - 12, 8, `Combat: ${stage.combatType}`, { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', align: 'right' }).setOrigin(1, 0)
+        const combatLabel = this.add.text(this.cameras.main.width - 12, 8, `Combat: ${stage.combatType}`, { fontFamily: 'monospace', fontSize: '12px', color: '#b3c0ff', align: 'right' }).setOrigin(1, 0)
+        combatLabel.setAlpha(0)
+        this.tweens.add({ targets: combatLabel, alpha: 1, duration: 160, ease: 'Quad.out' })
         const stageNumber = run.stageIndex + run.biomeIndex * 100
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: false } }))
@@ -236,7 +290,9 @@ export class GameScene extends Phaser.Scene {
           selectedEnemyIsBoss = !!def.tags.isBoss
         }
         if (selectedEnemyName) {
-          this.add.text(this.cameras.main.width - 12, 26, `Enemy: ${selectedEnemyName}`, { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff', align: 'right' }).setOrigin(1, 0).setDepth(50)
+          const enemyLabel = this.add.text(this.cameras.main.width - 12, 26, `Enemy: ${selectedEnemyName}`, { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff', align: 'right' }).setOrigin(1, 0).setDepth(50)
+          enemyLabel.setAlpha(0)
+          this.tweens.add({ targets: enemyLabel, alpha: 1, duration: 160, ease: 'Quad.out', delay: 40 })
         }
         // Global blessing of bosses from unique events
         if (stage.combatType === 'boss' && gameManager.areGlobalBossesBlessed()) {
@@ -608,6 +664,7 @@ export class GameScene extends Phaser.Scene {
         lineSpacing: 2,
         wordWrap: { width: panelW - 8 },
       }).setOrigin(0)
+      logTextObj.setAlpha(0)
       const logMaskG = this.add.graphics()
       logMaskG.fillStyle(0xffffff, 1)
       logMaskG.fillRect(panelX, logClipTop, panelW, logClipHeight)
@@ -616,10 +673,51 @@ export class GameScene extends Phaser.Scene {
       logTextObj.setMask(logMask)
 
       // Lightweight log buffer and on-screen log
+      const scene = this
       let logBuffer = ''
       function updateLog(text: string, _toBottom = true) {
         logBuffer = text
         logTextObj.setText(text)
+        if (logTextObj.alpha < 1) {
+          scene.tweens.add({
+            targets: logTextObj,
+            alpha: 1,
+            duration: 200,
+            ease: 'Quad.out'
+          })
+        }
+      }
+
+      // Helper: tween enemy sprite and battle log out, then advance to next stage
+      const tweenEnemyAndAdvance = async () => {
+        if (isAdvancingStage) return
+        isAdvancingStage = true
+        let advanced = false
+        const doAdvance = async () => {
+          if (advanced) return
+          advanced = true
+          await gameManager.advance()
+          this.scene.restart()
+        }
+
+        if (enemySprite) {
+          this.tweens.add({
+            targets: enemySprite,
+            alpha: 0,
+            y: enemySprite.y + 16,
+            duration: 180,
+            ease: 'Quad.out',
+            onComplete: () => { void doAdvance() }
+          })
+        }
+
+        this.tweens.add({
+          targets: logTextObj,
+          alpha: 0,
+          duration: 160,
+          ease: 'Quad.out',
+          onComplete: () => { if (!enemySprite) void doAdvance() }
+        })
       }
 
       // Boss fight presentation state (slow, turn-based over autoplay ticks)
@@ -659,13 +757,12 @@ export class GameScene extends Phaser.Scene {
         }
       })
 
-      // If this is a combat stage, gate combat behind Start Combat or auto-combat
+      // If this is a combat stage, auto-start combat immediately
       if (stage?.type === 'combat' && run) {
         const stageNumber = run.stageIndex + run.biomeIndex * 100
         // Anchor positions aligned to frame bottom and scaled with frame
         const bottomY = frame.y + frame.displayHeight / 2.27
         const slotOffset = 220 * sFrame
-        const leftSlotX = frame.x - slotOffset
         const rightSlotX = frame.x + slotOffset
 
         // Image button helper (scaled to frame ratio) with glow/tint hover
@@ -677,18 +774,27 @@ export class GameScene extends Phaser.Scene {
           glow.setTint(0x99ccff)
           glow.setAlpha(0)
           const img = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(220)
-          img.setScale(base)
+          img.setScale(base * 0.9)
+          img.setAlpha(0)
           img.setInteractive({ useHandCursor: true })
           img.on('pointerover', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35) })
           img.on('pointerout', () => { img.setScale(base); img.clearTint(); glow.setAlpha(0) })
           img.on('pointerdown', () => { img.setScale(base * 0.98); img.setTint(0xd7e6ff); glow.setAlpha(0.45) })
           img.on('pointerup', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35); onUp() })
+
+          this.tweens.add({
+            targets: img,
+            alpha: 1,
+            scale: base,
+            duration: 180,
+            ease: 'Back.out',
+            delay: 40
+          })
+
           return img
         }
 
-        const startBtn = makeImgBtn('ui:startCombat', leftSlotX, bottomY, () => { void resolveCombat() })
         const resolveCombat = async (): Promise<void> => {
-          startBtn.disableInteractive().setAlpha(0.6)
           let result: { outcome: 'win'|'loss'; log: string[]; enemiesKilled: number }
           if (stage.combatType === 'boss' && selectedEnemyIsBoss) {
             // Boss fights are pre-resolved but revealed slowly as "turns" on each autoplay tick.
@@ -758,7 +864,6 @@ export class GameScene extends Phaser.Scene {
                   }
                 }
                 // After boss victory, allow advancing
-                startBtn.destroy()
                 goNextStage = async () => {
                   canAutoAdvance = false
                   bossSteps = null
@@ -780,39 +885,44 @@ export class GameScene extends Phaser.Scene {
                 const cur3 = logBuffer ? `${logBuffer}\n` : ''
                 updateLog(cur3 + `You lost a life. Lives remaining: ${livesLeft}/3`)
                 if (livesLeft <= 0) {
-                  try {
-                    const prog = gameManager.getBiomeProgress()
-                    const stageIdx = prog.stageIndex ?? 0
-                    const xpGained = Math.max(0, 10 + stageIdx * 5)
-                    const xpRes = await addMyXp(xpGained)
-                    await incMyDeaths(1)
-                    const metrics = gameManager.getRunMetrics()
-                    const run = gameManager.getRun()
-                    const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
-                    if (typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
-                      window.dispatchEvent(new CustomEvent('game:run-ended', {
-                        detail: {
-                          reason: 'death',
-                          xpGained,
-                          level: xpRes?.level,
-                          xp: xpRes?.xp,
-                          metrics,
-                          seed: run?.seed,
-                          biomeId: stage?.biomeId,
-                          stageIndex: run?.stageIndex,
-                          biomesCompleted,
+                  const cam = this.cameras.main
+                  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+                    void (async () => {
+                      try {
+                        const prog = gameManager.getBiomeProgress()
+                        const stageIdx = prog.stageIndex ?? 0
+                        const xpGained = Math.max(0, 10 + stageIdx * 5)
+                        const xpRes = await addMyXp(xpGained)
+                        await incMyDeaths(1)
+                        const metrics = gameManager.getRunMetrics()
+                        const run = gameManager.getRun()
+                        const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                          window.dispatchEvent(new CustomEvent('game:run-ended', {
+                            detail: {
+                              reason: 'death',
+                              xpGained,
+                              level: xpRes?.level,
+                              xp: xpRes?.xp,
+                              metrics,
+                              seed: run?.seed,
+                              biomeId: stage?.biomeId,
+                              stageIndex: run?.stageIndex,
+                              biomesCompleted,
+                            }
+                          }))
                         }
-                      }))
-                    }
-                  } catch {}
-                  await completeRunAndMaybeReward()
-                  gameManager.resetRun()
-                  this.scene.stop('GameScene'); this.scene.start('GameScene')
+                      } catch {}
+                      await completeRunAndMaybeReward()
+                      gameManager.resetRun()
+                      this.scene.stop('GameScene'); this.scene.start('GameScene')
+                    })()
+                  })
+                  cam.fadeOut(200, 0, 0, 0)
                   return
                 }
                 // If still have lives, treat as normal loss and allow restarting from next stage
-                startBtn.destroy()
                 goNextStage = async () => {
                   canAutoAdvance = false
                   bossSteps = null
@@ -888,45 +998,48 @@ export class GameScene extends Phaser.Scene {
               const cur = logBuffer ? `${logBuffer}\\n` : ''
               updateLog(cur + `You lost a life. Lives remaining: ${livesLeft}/3`)
               if (livesLeft <= 0) {
-                // Award XP based on progress and count a death
-                try {
-                  const prog = gameManager.getBiomeProgress()
-                  const stageIdx = prog.stageIndex ?? 0
-                  const xpGained = Math.max(0, 10 + stageIdx * 5)
-                  const xpRes = await addMyXp(xpGained)
-                  await incMyDeaths(1)
-                  const metrics = gameManager.getRunMetrics()
-                  const run = gameManager.getRun()
-                  const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
-                  if (typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
-                    window.dispatchEvent(new CustomEvent('game:run-ended', {
-                      detail: {
-                        reason: 'death',
-                        xpGained,
-                        level: xpRes?.level,
-                        xp: xpRes?.xp,
-                        metrics,
-                        seed: run?.seed,
-                        biomeId: stage?.biomeId,
-                        stageIndex: run?.stageIndex,
-                        biomesCompleted,
+                const cam = this.cameras.main
+                cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+                  void (async () => {
+                    try {
+                      const prog = gameManager.getBiomeProgress()
+                      const stageIdx = prog.stageIndex ?? 0
+                      const xpGained = Math.max(0, 10 + stageIdx * 5)
+                      const xpRes = await addMyXp(xpGained)
+                      await incMyDeaths(1)
+                      const metrics = gameManager.getRunMetrics()
+                      const run = gameManager.getRun()
+                      const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
+                      if (typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                        window.dispatchEvent(new CustomEvent('game:run-ended', {
+                          detail: {
+                            reason: 'death',
+                            xpGained,
+                            level: xpRes?.level,
+                            xp: xpRes?.xp,
+                            metrics,
+                            seed: run?.seed,
+                            biomeId: stage?.biomeId,
+                            stageIndex: run?.stageIndex,
+                            biomesCompleted,
+                          }
+                        }))
                       }
-                    }))
-                  }
-                } catch {}
-                await completeRunAndMaybeReward()
-                gameManager.resetRun()
-                this.scene.stop('GameScene'); this.scene.start('GameScene')
+                    } catch {}
+                    await completeRunAndMaybeReward()
+                    gameManager.resetRun()
+                    this.scene.stop('GameScene'); this.scene.start('GameScene')
+                  })()
+                })
+                cam.fadeOut(200, 0, 0, 0)
                 return
               }
             }
-            // After resolution, remove start button and show Next Stage
-            startBtn.destroy()
+            // After resolution, show Next Stage button and allow advancing
             goNextStage = async () => {
               canAutoAdvance = false
-              await gameManager.advance()
-              this.scene.restart()
+              await tweenEnemyAndAdvance()
             }
             canAutoAdvance = true
             if (typeof window !== 'undefined') {
@@ -938,14 +1051,16 @@ export class GameScene extends Phaser.Scene {
             })
           }
         }
-        if (gameManager.isAutoCombat()) { void resolveCombat() }
+        void resolveCombat()
       } else if (stage?.type === 'choice' && run) {
         // Present seeded choice options (2-3)
-        const stageNumber = run.stageIndex + run.biomeIndex * 100
+        const prog = gameManager.getBiomeProgress()
+        const biomeIndex = prog.biomeIndex ?? run.biomeIndex ?? 0
+        const stageNumber = run.stageIndex + biomeIndex * 100
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: false } }))
         }
-        const choiceOptions = pickChoiceOptions(run.seed, stageNumber)
+        const choiceOptions = pickChoiceOptions(run.seed, stageNumber, { biomeIndex })
         // Position higher so bottom Start/Next slots remain untouched
         const btnYStart = centerY - 24
         const spacing = 32
@@ -953,6 +1068,16 @@ export class GameScene extends Phaser.Scene {
           const btn = this.add.text(centerX, btnYStart + i * spacing, `${opt.title}`, { fontFamily: 'sans-serif', fontSize: '14px', color: '#cfe1ff', backgroundColor: '#101531' }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(120)
           btn.setInteractive({ useHandCursor: true })
           btn.setStroke('#2a2f55', 1)
+          btn.setAlpha(0)
+          btn.y += 6
+          this.tweens.add({
+            targets: btn,
+            alpha: 1,
+            y: btn.y - 6,
+            duration: 200,
+            ease: 'Quad.out',
+            delay: i * 30
+          })
           btn.on('pointerover', () => { btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff) })
           btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
           btn.on('pointerdown', async () => {
@@ -992,19 +1117,25 @@ export class GameScene extends Phaser.Scene {
                 const cur2 = logBuffer ? `${logBuffer}\n` : ''
                 updateLog(cur2 + `You lost a life. Lives remaining: ${livesLeft}/3`)
                 if (livesLeft <= 0) {
-                  try {
-                    const prog = gameManager.getBiomeProgress()
-                    const stageIdx = prog.stageIndex ?? 0
-                    const xp = Math.max(0, 10 + stageIdx * 5)
-                    const xpRes = await addMyXp(xp)
-                    await incMyDeaths(1)
-                    if (typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
-                    }
-                  } catch {}
-                  await completeRunAndMaybeReward()
-                  gameManager.resetRun()
-                  this.scene.stop('GameScene'); this.scene.start('GameScene')
+                  const cam = this.cameras.main
+                  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+                    void (async () => {
+                      try {
+                        const prog = gameManager.getBiomeProgress()
+                        const stageIdx = prog.stageIndex ?? 0
+                        const xp = Math.max(0, 10 + stageIdx * 5)
+                        const xpRes = await addMyXp(xp)
+                        await incMyDeaths(1)
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                        }
+                      } catch {}
+                      await completeRunAndMaybeReward()
+                      gameManager.resetRun()
+                      this.scene.stop('GameScene'); this.scene.start('GameScene')
+                    })()
+                  })
+                  cam.fadeOut(200, 0, 0, 0)
                 }
               }
             }
@@ -1075,7 +1206,11 @@ export class GameScene extends Phaser.Scene {
           const desc = "You encounter a strange pedestal in the middle of nowhere. You've heard stories that they can duplicate whatever's placed on top of them."
           const cur = logBuffer ? `${logBuffer}\n` : ''
           updateLog(cur + desc)
-          placeFramedImage('enemy:empty')
+          const pillar = placeFramedImage('unique:pillar')
+          if (pillar) {
+            pillar.setAlpha(0)
+            this.tweens.add({ targets: pillar, alpha: 1, duration: 260, ease: 'Quad.out' })
+          }
 
             const itemsNow = gameManager.getRunItems()
             if (itemsNow.length === 0) {
@@ -1206,6 +1341,13 @@ export class GameScene extends Phaser.Scene {
           const cookies = placeFramedImage('unique:teacookies')
           let clickHint: Phaser.GameObjects.Text | null = null
           if (cookies) {
+            cookies.setAlpha(0)
+            this.tweens.add({
+              targets: cookies,
+              alpha: 1,
+              duration: 260,
+              ease: 'Quad.out'
+            })
             cookies.setInteractive({ useHandCursor: true })
             clickHint = that.add.text(cookies.x, cookies.y - cookies.displayHeight - 8, 'click me', {
               fontFamily: 'monospace',
