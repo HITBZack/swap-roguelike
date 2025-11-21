@@ -43,6 +43,7 @@ class GameManager {
   private suppressNextResume = false
   private runStartEpochMs: number | null = null
   private autoCombat = false
+  private introMode = false
   // In-memory run metrics
   private enemiesKilledTotal = 0
   private minibossesDefeated = 0
@@ -311,13 +312,28 @@ class GameManager {
   isAutoCombat(): boolean { return this.autoCombat }
   setAutoCombat(v: boolean): void { this.autoCombat = !!v }
 
+  setIntroMode(v: boolean): void { this.introMode = !!v }
+
   private generateBiomeCounts(rng: RNG): number[] {
-    return this.biomes.map(() => int(rng, 5, 9))
+    const counts = this.biomes.map(() => int(rng, 5, 9))
+    if (this.introMode && counts.length > 0) {
+      counts[0] = 6
+    }
+    return counts
   }
 
   private generateStagePlan(biomeIndex: number, stageIndex: number, forceBoss: boolean): StagePlan {
     if (!this.rng) throw new Error('RNG not ready')
     const biomeId = this.biomes[biomeIndex % this.biomes.length]
+    if (this.introMode && biomeIndex === 0) {
+      const idx = Math.max(0, Math.min(5, stageIndex))
+      if (idx === 0) return { biomeId, index: stageIndex, type: 'combat', combatType: 'single' }
+      if (idx === 1) return { biomeId, index: stageIndex, type: 'combat', combatType: 'single' }
+      if (idx === 2) return { biomeId, index: stageIndex, type: 'choice' }
+      if (idx === 3) return { biomeId, index: stageIndex, type: 'combat', combatType: 'miniboss' }
+      if (idx === 4) return { biomeId, index: stageIndex, type: 'unique', uniqueId: 'pedestal_duplicate' }
+      if (idx === 5 || forceBoss) return { biomeId, index: stageIndex, type: 'combat', combatType: 'boss' }
+    }
     // Gate unique stages: only appear once player is past the first biome
     const isFirstBiome = biomeIndex === 0
     let type: StageType

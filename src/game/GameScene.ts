@@ -20,7 +20,7 @@ import { gameManager } from '../services/GameManager'
 import type { StagePlan } from '../services/GameManager'
 import { runSingleCombat, runMultiCombat, runMiniBoss } from '../services/BattleManager'
 import { completeRunAndMaybeReward } from '../services/RunRewards'
-import { addMyXp, incMyDeaths } from '../lib/profile'
+import { addMyXp, incMyDeaths, markMyIntroDone } from '../lib/profile'
 import { itemRegistry } from '../services/items/registry'
 import { getEnemiesFor, getEnemyDefs } from '../services/enemies/registry'
 import { recordBattleStats, recordChoiceStats } from '../services/RunStats'
@@ -847,6 +847,7 @@ export class GameScene extends Phaser.Scene {
               void recordBattleStats(result.enemiesKilled, stageNumber)
               gameManager.addEnemiesKilled(result.enemiesKilled)
               if (result.outcome === 'win') {
+                void markMyIntroDone()
                 gameManager.incBossDefeated()
                 if (selectedEnemyIsBlessed) {
                   const rng = fromSeed(`${run.seed}|${stageNumber}|bless`)

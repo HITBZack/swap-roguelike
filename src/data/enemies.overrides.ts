@@ -4,7 +4,11 @@ type EnemyOverride = Partial<Pick<EnemyDef, 'biomes' | 'base' | 'tags' | 'displa
 
 export const enemyOverrides: Record<string, EnemyOverride> = {
   // Bosses
-  'obitus the brute': { tags: { isBoss: true, isMiniboss: false, isMulti: false, isBlessed: false } },
+  'obitus the brute': {
+    biomes: ['meadow'],
+    base: { hp: 45, atk: 6, def: 1, spd: 1 },
+    tags: { isBoss: true, isMiniboss: false, isMulti: false, isBlessed: false }
+  },
 
   // Mini-bosses
   'manling seer': { tags: { isBoss: false, isMiniboss: true, isMulti: false, isBlessed: false } },

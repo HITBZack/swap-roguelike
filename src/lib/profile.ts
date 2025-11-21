@@ -16,6 +16,7 @@ export interface ProfileDTO {
   stat_points_pending?: number | null
   stat_points_spent?: number | null
   stat_allocations?: Record<string, number> | null
+  is_intro_done?: boolean | null
 }
 
 export async function fetchProfileById(userId: string): Promise<ProfileDTO | null> {
@@ -31,6 +32,16 @@ export async function fetchProfileById(userId: string): Promise<ProfileDTO | nul
     return null
   }
   return data as unknown as ProfileDTO
+}
+
+export async function markMyIntroDone(): Promise<void> {
+  const { data: auth } = await supabase.auth.getUser()
+  const uid = auth.user?.id
+  if (!uid) return
+  try {
+    await supabase.rpc('profile_mark_intro_done', { p_user: uid })
+  } catch {
+  }
 }
 
 /**

@@ -47,6 +47,8 @@ export function App(): JSX.Element {
   const [autoPlaySpeed, setAutoPlaySpeed] = useState<0.5 | 1 | 1.5>(1)
   const [deathSummary, setDeathSummary] = useState<DeathSummary | null>(null)
   const [deathSummaryPhase, setDeathSummaryPhase] = useState<'idle' | 'enter' | 'visible' | 'exit'>('idle')
+  const [showAutoPlayHint, setShowAutoPlayHint] = useState(false)
+  const [lastAllocatedKey, setLastAllocatedKey] = useState<string | null>(null)
 
   const itemIconMap = useMemo(() => {
     const entries = Object.entries(itemImageUrls).map(([p, url]) => {
@@ -57,10 +59,24 @@ export function App(): JSX.Element {
     return Object.fromEntries(entries) as Record<string, string>
   }, [])
 
+  useEffect(() => {
+    if (profile?.is_intro_done && !showAutoPlayHint) {
+      setShowAutoPlayHint(true)
+    }
+  }, [profile?.is_intro_done])
+
   // Keep GameManager's auto-combat flag in sync with Auto-Play
   useEffect(() => {
     gameManager.setAutoCombat(autoPlay)
   }, [autoPlay])
+
+  useEffect(() => {
+    const introDone = !!profile?.is_intro_done
+    gameManager.setIntroMode(!introDone)
+    if (!introDone && autoPlay) {
+      setAutoPlay(false)
+    }
+  }, [profile?.is_intro_done])
 
   // Show a death / run-end summary overlay when the game signals a completed run
   useEffect(() => {
@@ -778,6 +794,54 @@ export function App(): JSX.Element {
           <div style={{ marginLeft: 'auto', fontSize: 12, color: '#91a0ff' }}>© {new Date().getFullYear()} Swap MMO</div>
         </div>
       </footer>
+      {showAutoPlayHint && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.88)',
+            zIndex: 2100,
+            display: 'grid',
+            placeItems: 'center',
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 420,
+              padding: 16,
+              borderRadius: 12,
+              background: '#020617',
+              border: '1px solid #1f2937',
+              color: '#e5e7ff',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.8)',
+              display: 'grid',
+              rowGap: 10,
+              fontSize: 13,
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 600 }}>Tip: Enable Auto-Play</div>
+            <div style={{ color: '#9ca3af' }}>
+              You can let runs play themselves. Use the Auto-Play toggle above the arena to have the game advance stages for you.
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAutoPlayHint(false)}
+              className="hover-chip"
+              style={{
+                justifySelf: 'end',
+                padding: '6px 10px',
+                borderRadius: 999,
+                border: '1px solid #4f46e5',
+                background: 'linear-gradient(135deg,#4f46e5,#6366f1)',
+                color: '#e5e7ff',
+                fontSize: 12,
+              }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
       {openAccount && (
         <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
       )}
@@ -817,7 +881,10 @@ export function App(): JSX.Element {
                 const onClick = async () => {
                   if (pendingStatPoints <= 0) return
                   const updated = await spendMyStatPoint(opt.key)
-                  if (updated) setProfile(updated)
+                  if (updated) {
+                    setProfile(updated)
+                    setLastAllocatedKey(opt.key)
+                  }
                 }
                 return (
                   <button
@@ -842,6 +909,9 @@ export function App(): JSX.Element {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontWeight: 600 }}>{opt.label}</span>
                       <span style={{ marginLeft: 'auto', fontSize: 11, color: '#a5b4fc' }}>Points: {alloc}</span>
+                      {lastAllocatedKey === opt.key && (
+                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: '#22c55e' }}>+1</span>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: '#9ca3af' }}>{opt.desc}</div>
                   </button>
