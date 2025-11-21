@@ -13,6 +13,9 @@ export interface ProfileDTO {
   deaths?: number | null
   equipped_titles?: string[] | null
   character_sprite?: string | null
+  stat_points_pending?: number | null
+  stat_points_spent?: number | null
+  stat_allocations?: Record<string, number> | null
 }
 
 export async function fetchProfileById(userId: string): Promise<ProfileDTO | null> {
@@ -53,8 +56,13 @@ export async function updateMyCharacterSprite(spriteKey: string | null): Promise
 
 /**
  * Add XP to the current user via RPC (auto-level handled server-side).
+ *
+ * The underlying `profile_add_xp` function may also return additional
+ * profile fields such as stat_points_pending or stat_allocations; we
+ * surface the guaranteed level/xp plus allow callers to inspect the
+ * raw payload if needed.
  */
-export async function addMyXp(amount: number): Promise<{ level: number; xp: number } | null> {
+export async function addMyXp(amount: number): Promise<{ level: number; xp: number; raw?: any } | null> {
   const { data: auth } = await supabase.auth.getUser()
   const uid = auth.user?.id
   if (!uid || !Number.isFinite(amount) || amount <= 0) return null
@@ -66,7 +74,32 @@ export async function addMyXp(amount: number): Promise<{ level: number; xp: numb
   }
   const row: any = Array.isArray(data) ? data[0] : data
   if (!row) return null
-  return { level: Number(row.level ?? 1), xp: Number(row.xp ?? 0) }
+  return { level: Number(row.level ?? 1), xp: Number(row.xp ?? 0), raw: row }
+}
+
+/**
+ * Spend a single pending stat point on a chosen stat key.
+ *
+ * The corresponding Supabase RPC `profile_spend_stat_point` is
+ * responsible for validating that the user has pending points and
+ * that the provided stat key is allowed.
+ */
+export async function spendMyStatPoint(statKey: string): Promise<ProfileDTO | null> {
+  const { data: auth } = await supabase.auth.getUser()
+  const uid = auth.user?.id
+  if (!uid || !statKey) return null
+  const { data, error } = await supabase.rpc('profile_spend_stat_point', {
+    p_user: uid,
+    p_stat: statKey
+  })
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('spendMyStatPoint error', error)
+    return null
+  }
+  const row: any = Array.isArray(data) ? data[0] : data
+  if (!row) return null
+  return row as ProfileDTO
 }
 
 /**

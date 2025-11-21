@@ -29,6 +29,37 @@ export function computeBaseStats(level: number): PlayerBaseStats {
   }
 }
 
+/**
+ * Apply permanent, profile-level stat allocations on top of the
+ * level-based base stats. Each allocation point maps to a small,
+ * fixed bonus per stat.
+ */
+export function applyPermanentAllocations(base: PlayerBaseStats, allocations: Partial<Record<StatKey, number>> | null | undefined): PlayerBaseStats {
+  if (!allocations) return base
+  const out: PlayerBaseStats = { ...base }
+  const get = (k: StatKey): number => Math.max(0, allocations[k] ?? 0)
+
+  const hpPts = get('maxHp')
+  const dmgPts = get('damage')
+  const accPts = get('accuracy')
+  const dodgePts = get('dodge')
+  const projPts = get('projectileCount')
+  const shieldPts = get('shield')
+  const lsPts = get('lifestealPct')
+  const dotPts = get('dotDmgPct')
+
+  if (hpPts > 0) out.maxHp += hpPts * 5
+  if (dmgPts > 0) out.damage += dmgPts * 1
+  if (accPts > 0) out.accuracy += accPts * 0.01
+  if (dodgePts > 0) out.dodge += dodgePts * 0.005
+  if (projPts > 0) out.projectileCount += Math.floor(projPts * 0.1)
+  if (shieldPts > 0) out.shield += shieldPts * 1
+  if (lsPts > 0) out.lifestealPct += lsPts * 0.005
+  if (dotPts > 0) out.dotDmgPct += dotPts * 0.05
+
+  return out
+}
+
 // Placeholder: later, items can contribute additive/multiplicative modifiers per stat.
 // For now, we treat items via battle engine hooks, and keep this as identity.
 export function applyItemModifiers(base: PlayerBaseStats, items: ItemInstance[]): PlayerEffectiveStats {

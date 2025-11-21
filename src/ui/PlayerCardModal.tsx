@@ -146,8 +146,8 @@ export function PlayerCardModal({ open, onClose, username, email, avatarUrl, use
                 <span style={{ fontSize: 12, color: '#9db0ff' }}>{email}</span>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid #3a428a', background: '#111842' }}>Guild: Silver Serpents</span>
-                <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid #3a428a', background: '#111842' }}>Rank: Acolyte</span>
+                <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid #3a428a', background: '#111842' }}>Guild: Coming Soon</span>
+                <span style={{ fontSize: 11, padding: '4px 8px', borderRadius: 999, border: '1px solid #3a428a', background: '#111842' }}>Rank: Coming Soon</span>
               </div>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>

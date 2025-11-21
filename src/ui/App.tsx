@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BattleContainer } from './BattleContainer'
 import { supabase } from '../lib/supabase'
-import { fetchMyProfile, type ProfileDTO } from '../lib/profile'
+import { fetchMyProfile, spendMyStatPoint, type ProfileDTO } from '../lib/profile'
 import { AccountModal } from './AccountModal'
 import { PlayerCardModal } from './PlayerCardModal'
 import { ChatPanel } from './ChatPanel'
@@ -10,7 +10,7 @@ import { UsernameModal } from './UsernameModal'
 import { listInventory, listLoadout, equipItem, decrementLoadout, clearLoadout } from '../services/Inventory'
 import { itemRegistry } from '../services/items/registry'
 import type { ItemInstance } from '../services/items/types'
-import { computeBaseStats, buildEffectiveStats } from '../services/player/Stats'
+import { computeBaseStats, applyPermanentAllocations, applyItemModifiers } from '../services/player/Stats'
 import { gameManager } from '../services/GameManager'
 
 type DeathSummary = {
@@ -286,11 +286,16 @@ export function App(): JSX.Element {
 
   // Stats: base vs effective from level and equipped loadout
   const level = profile?.level ?? 1
+  const pendingStatPoints = profile?.stat_points_pending ?? 0
+  const statAllocations = profile?.stat_allocations ?? null
   const loadoutItems = useMemo<ItemInstance[]>(() => (
     Object.entries(loadout).map(([id, stacks]) => ({ id, stacks }))
   ), [loadout])
-  const baseStats = useMemo(() => computeBaseStats(level), [level])
-  const effStats = useMemo(() => buildEffectiveStats(level, loadoutItems), [level, loadoutItems])
+  const baseStats = useMemo(() => {
+    const base = computeBaseStats(level)
+    return applyPermanentAllocations(base, statAllocations as any)
+  }, [level, statAllocations])
+  const effStats = useMemo(() => applyItemModifiers(baseStats, loadoutItems), [baseStats, loadoutItems])
   const pct = (v: number) => `${Math.round(v * 100)}%`
 
   // Small polish: animate effective stat cell briefly when values change
@@ -546,6 +551,11 @@ export function App(): JSX.Element {
                     <div style={{ width: '100%', height: 8, borderRadius: 6, background: '#12173a', border: '1px solid #1f2447', overflow: 'hidden' }}>
                       <div style={{ width: `${xpPct}%`, height: '100%', background: '#6aa6ff' }} />
                     </div>
+                    {pendingStatPoints > 0 && (
+                      <div style={{ fontSize: 11, color: '#f97316' }}>
+                        Unspent stat points: {pendingStatPoints}
+                      </div>
+                    )}
                   </div>
                 )
               })()}
@@ -773,6 +783,77 @@ export function App(): JSX.Element {
       )}
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />
       <UsernameModal open={Boolean(needUsername)} />
+      {pendingStatPoints > 0 && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Allocate level-up stats"
+          className="anim-fade-in"
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'grid', placeItems: 'center', zIndex: 1800 }}
+        >
+          <div
+            className="anim-scale-in anim-slide-up"
+            style={{ width: 'min(520px, 92vw)', background: '#020617', border: '1px solid #1f2937', borderRadius: 12, padding: 16, color: '#e5e7ff', boxShadow: '0 18px 46px rgba(0,0,0,0.7)', display: 'grid', rowGap: 10 }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Level-Up Available</h3>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>Unspent points: {pendingStatPoints}</span>
+            </div>
+            <div style={{ fontSize: 12, color: '#9ca3af' }}>
+              Choose which stat to increase. Each level grants one permanent point. These bonuses apply across all runs.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+              {([
+                { key: 'maxHp',           label: 'Max HP',      desc: '+5 HP per point' },
+                { key: 'damage',          label: 'Damage',      desc: '+1 damage per point' },
+                { key: 'accuracy',        label: 'Accuracy',    desc: '+1% accuracy per point' },
+                { key: 'dodge',           label: 'Dodge',       desc: '+0.5% dodge per point' },
+                { key: 'shield',          label: 'Shield',      desc: '+1 shield per point' },
+                { key: 'projectileCount', label: 'Projectiles', desc: 'Small chance to gain extra projectiles over time' },
+                { key: 'lifestealPct',    label: 'Lifesteal',   desc: '+0.5% lifesteal per point' },
+                { key: 'dotDmgPct',       label: 'DoT Damage',  desc: '+5% DoT damage per point' },
+              ] as const).map((opt) => {
+                const alloc = (statAllocations as any)?.[opt.key] ?? 0
+                const onClick = async () => {
+                  if (pendingStatPoints <= 0) return
+                  const updated = await spendMyStatPoint(opt.key)
+                  if (updated) setProfile(updated)
+                }
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={onClick}
+                    className="hover-chip"
+                    style={{
+                      textAlign: 'left',
+                      padding: '8px 10px',
+                      borderRadius: 8,
+                      border: '1px solid #1e293b',
+                      background: '#020617',
+                      color: '#e5e7ff',
+                      display: 'grid',
+                      rowGap: 4,
+                      fontSize: 12,
+                      boxShadow: '0 8px 18px rgba(15,23,42,0.9)',
+                      transition: 'transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 600 }}>{opt.label}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, color: '#a5b4fc' }}>Points: {alloc}</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9ca3af' }}>{opt.desc}</div>
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 11, color: '#64748b' }}>
+              This window will reappear until all level-up points are spent.
+            </div>
+          </div>
+        </div>
+      )}
       {hasDeathSummary && deathSummary && (
         <div
           className={deathSummaryPhase === 'exit' ? 'anim-fade-out' : 'anim-fade-in'}

@@ -1067,6 +1067,46 @@ export class GameScene extends Phaser.Scene {
           window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: false } }))
         }
         const choiceOptions = pickChoiceOptions(run.seed, stageNumber, { biomeIndex })
+        if (!choiceOptions || choiceOptions.length === 0) {
+          // Safety: if no choices can be generated, treat this as an empty room and advance.
+          const cur = logBuffer ? `${logBuffer}\n` : ''
+          updateLog(cur + 'You pass through a quiet stretch of the biome. Nothing answers your presence.')
+          const bottomY = frame.y + frame.displayHeight / 2.27
+          const slotOffset = 220 * sFrame
+          const rightSlotX = frame.x + slotOffset
+          const makeImgBtn = (key: string, x: number, y: number, onUp: () => void) => {
+            const base = sFrame
+            const glow = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(219)
+            glow.setScale(base * 1.06)
+            glow.setBlendMode(Phaser.BlendModes.ADD)
+            glow.setTint(0x99ccff)
+            glow.setAlpha(0)
+            const img = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(220)
+            img.setScale(base)
+            img.setInteractive({ useHandCursor: true })
+            img.on('pointerover', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35) })
+            img.on('pointerout', () => { img.setScale(base); img.clearTint(); glow.setAlpha(0) })
+            img.on('pointerdown', () => { img.setScale(base * 0.98); img.setTint(0xd7e6ff); glow.setAlpha(0.45) })
+            img.on('pointerup', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35); onUp() })
+            return img
+          }
+          goNextStage = async () => {
+            if (isAdvancingStage) return
+            isAdvancingStage = true
+            canAutoAdvance = false
+            await gameManager.advance()
+            this.scene.restart()
+          }
+          canAutoAdvance = true
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+          }
+          makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+            if (!goNextStage) return
+            void goNextStage()
+          })
+          return
+        }
         // Position higher so bottom Start/Next slots remain untouched
         const btnYStart = centerY - 24
         const spacing = 32
@@ -1613,7 +1653,43 @@ export class GameScene extends Phaser.Scene {
           })
         }
       } else {
-        updateLog('No battle this stage.', false)
+        // Fallback: any stage with no explicit handler still gets a quick "No battle" log and a Next Stage button.
+        const cur = logBuffer ? `${logBuffer}\n` : ''
+        updateLog(cur + 'No battle this stage.', false)
+        const bottomY = frame.y + frame.displayHeight / 2.27
+        const slotOffset = 220 * sFrame
+        const rightSlotX = frame.x + slotOffset
+        const makeImgBtn = (key: string, x: number, y: number, onUp: () => void) => {
+          const base = sFrame
+          const glow = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(219)
+          glow.setScale(base * 1.06)
+          glow.setBlendMode(Phaser.BlendModes.ADD)
+          glow.setTint(0x99ccff)
+          glow.setAlpha(0)
+          const img = this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(220)
+          img.setScale(base)
+          img.setInteractive({ useHandCursor: true })
+          img.on('pointerover', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35) })
+          img.on('pointerout', () => { img.setScale(base); img.clearTint(); glow.setAlpha(0) })
+          img.on('pointerdown', () => { img.setScale(base * 0.98); img.setTint(0xd7e6ff); glow.setAlpha(0.45) })
+          img.on('pointerup', () => { img.setScale(base * 1.03); img.setTint(0xbfd6ff); glow.setAlpha(0.35); onUp() })
+          return img
+        }
+        goNextStage = async () => {
+          if (isAdvancingStage) return
+          isAdvancingStage = true
+          canAutoAdvance = false
+          await gameManager.advance()
+          this.scene.restart()
+        }
+        canAutoAdvance = true
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+        }
+        makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+          if (!goNextStage) return
+          void goNextStage()
+        })
       }
 
       // Place control buttons beneath the main area (centered)
