@@ -22,6 +22,10 @@ export type StagePlan = {
   statusReflect?: boolean
   /** If true, the next generated stage will be forced as a boss combat. */
   forceNextBoss?: boolean
+  /** If true, the next generated stage will be forced as a miniboss combat. */
+  forceNextMiniboss?: boolean
+  /** Optional band hint for special miniboss rewards, e.g. from choice events. */
+  minibossRewardBand?: 'common_rare'
 }
 
 export type RunDTO = {
@@ -57,7 +61,7 @@ class GameManager {
     this.biomeStageCounts = this.generateBiomeCounts(this.rng)
     const biomeIndex = 0
     const stageIndex = 0
-    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex, false)
+    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex, false, false)
     stagePlan.attackMultiplier = 1
     stagePlan.maxHpMultiplier = 1
     stagePlan.bossesBlessed = false
@@ -109,6 +113,8 @@ class GameManager {
     const prevBossesBlessed = !!prevPlan.bossesBlessed
     const prevStatusReflect = !!prevPlan.statusReflect
     const prevForceNextBoss = !!prevPlan.forceNextBoss
+    const prevForceNextMiniboss = !!prevPlan.forceNextMiniboss
+    const prevMinibossRewardBand = prevPlan.minibossRewardBand
     let biomeIndex = this.run.biomeIndex
     let stageIndex = this.run.stageIndex + 1
     const stagesInBiome = this.biomeStageCounts[biomeIndex]
@@ -117,14 +123,16 @@ class GameManager {
       stageIndex = 0
       if (biomeIndex === 0) this.biomeStageCounts = this.generateBiomeCounts(this.rng)
     }
-    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex, prevForceNextBoss)
+    const stagePlan = this.generateStagePlan(biomeIndex, stageIndex, prevForceNextBoss, prevForceNextMiniboss)
     stagePlan.livesRemaining = prevLives
     stagePlan.blessedItemIds = prevBlessed
     stagePlan.attackMultiplier = prevAtkMult
     stagePlan.maxHpMultiplier = prevHpMult
     stagePlan.bossesBlessed = prevBossesBlessed
     stagePlan.statusReflect = prevStatusReflect
+    stagePlan.minibossRewardBand = prevMinibossRewardBand
     stagePlan.forceNextBoss = false
+    stagePlan.forceNextMiniboss = false
     const updated = await updateRunProgress(this.run.id, biomeIndex, stageIndex, stagePlan)
     if (!updated) return null
     this.run = { ...this.run, biomeIndex, stageIndex, stagePlan }
@@ -312,27 +320,50 @@ class GameManager {
   isAutoCombat(): boolean { return this.autoCombat }
   setAutoCombat(v: boolean): void { this.autoCombat = !!v }
 
+  // Expose whether the current run is following the intro-mode scripted stage plan
+  isIntroMode(): boolean { return this.introMode }
+
   setIntroMode(v: boolean): void { this.introMode = !!v }
+
+  getMinibossRewardBand(): 'common_rare' | null {
+    return this.run?.stagePlan.minibossRewardBand ?? null
+  }
+
+  setMinibossRewardBand(band?: 'common_rare'): void {
+    if (!this.run) return
+    this.run.stagePlan.minibossRewardBand = band
+  }
 
   private generateBiomeCounts(rng: RNG): number[] {
     const counts = this.biomes.map(() => int(rng, 5, 9))
     if (this.introMode && counts.length > 0) {
-      counts[0] = 6
+      // Fixed, scripted length for the intro biome so players see a consistent path.
+      // We now run 7 stages: combat, combat, choice, miniboss, choice, unique, boss.
+      counts[0] = 7
     }
     return counts
   }
 
-  private generateStagePlan(biomeIndex: number, stageIndex: number, forceBoss: boolean): StagePlan {
+  private generateStagePlan(biomeIndex: number, stageIndex: number, forceBoss: boolean, forceMiniboss: boolean): StagePlan {
     if (!this.rng) throw new Error('RNG not ready')
     const biomeId = this.biomes[biomeIndex % this.biomes.length]
     if (this.introMode && biomeIndex === 0) {
-      const idx = Math.max(0, Math.min(5, stageIndex))
+      // Scripted intro path (7 stages total in biome 0):
+      // 0: combat (single)
+      // 1: combat (single)
+      // 2: choice
+      // 3: combat (miniboss)
+      // 4: additional choice
+      // 5: unique pedestal
+      // 6: boss
+      const idx = Math.max(0, Math.min(6, stageIndex))
       if (idx === 0) return { biomeId, index: stageIndex, type: 'combat', combatType: 'single' }
       if (idx === 1) return { biomeId, index: stageIndex, type: 'combat', combatType: 'single' }
       if (idx === 2) return { biomeId, index: stageIndex, type: 'choice' }
       if (idx === 3) return { biomeId, index: stageIndex, type: 'combat', combatType: 'miniboss' }
-      if (idx === 4) return { biomeId, index: stageIndex, type: 'unique', uniqueId: 'pedestal_duplicate' }
-      if (idx === 5 || forceBoss) return { biomeId, index: stageIndex, type: 'combat', combatType: 'boss' }
+      if (idx === 4) return { biomeId, index: stageIndex, type: 'choice' }
+      if (idx === 5) return { biomeId, index: stageIndex, type: 'unique', uniqueId: 'pedestal_duplicate' }
+      if (idx === 6 || forceBoss) return { biomeId, index: stageIndex, type: 'combat', combatType: 'boss' }
     }
     // Gate unique stages: only appear once player is past the first biome
     const isFirstBiome = biomeIndex === 0
@@ -342,6 +373,9 @@ class GameManager {
     if (forceBoss) {
       type = 'combat'
       combatType = 'boss'
+    } else if (forceMiniboss) {
+      type = 'combat'
+      combatType = 'miniboss'
     } else {
       type = pickWeighted<StageType>(this.rng, isFirstBiome
         ? [

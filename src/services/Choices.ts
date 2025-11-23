@@ -11,6 +11,8 @@ export type ChoiceOutcome = {
   triggerBoss?: boolean
   enemiesKilled?: number
   poorDelta?: number
+  /** Optional hint for how to reward a triggered miniboss, e.g. common-rare item on win. */
+  minibossRewardBand?: 'common_rare'
 }
 
 function pickRandomFromArray<T>(rng: ReturnType<typeof fromSeed> | { next: () => number }, arr: T[]): T {
@@ -137,8 +139,10 @@ const baseChoices: ChoiceOption[] = [
     linkedGroups: ['danger'],
     resolve: async (_seed, _stageNumber, runItems) => {
       const log: string[] = []
-      log.push('You step into the cave... A mini-boss emerges!')
-      return { log, updatedRunItems: cloneRunItems(runItems), triggerMiniboss: true }
+      log.push('You step into the cave... You feel a powerful presence watching you from the dark.')
+      log.push('Rumors say that defeating what lives here can grant rare treasures.')
+      log.push('A challenging mini-boss now awaits you soon...')
+      return { log, updatedRunItems: cloneRunItems(runItems), triggerMiniboss: true, minibossRewardBand: 'common_rare' }
     }
   },
   {

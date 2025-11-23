@@ -275,16 +275,22 @@ export async function runMiniBoss(runSeed: string, stageNumber: number, items: I
     boss.def = Math.floor(Math.max(1, boss.def * enemyBiomeMult))
   }
 
-  // Difficulty scaling by role: miniboss ~1.85x, boss ~2.65x
+  // Difficulty scaling by role: miniboss ~1.85x, boss ~2.65x.
+  // In intro mode, the very first biome's boss is softened to avoid a brutal spike.
   const role = options.role ?? 'miniboss'
+  const biomeIndex = Math.max(0, Math.floor(stageNumber / 100))
+  const isIntroFirstBiomeBoss = role === 'boss' && gameManager.isIntroMode() && biomeIndex === 0
   if (role === 'miniboss') {
     boss.hp = Math.floor(boss.hp * 1.85)
     boss.atk = Math.floor(boss.atk * 1.85)
     boss.def = Math.floor(Math.max(1, boss.def * 1.85))
   } else if (role === 'boss') {
-    boss.hp = Math.floor(boss.hp * 2.65)
-    boss.atk = Math.floor(boss.atk * 2.65)
-    boss.def = Math.floor(Math.max(1, boss.def * 2.65))
+    const hpMult = isIntroFirstBiomeBoss ? 1.55 : 2.65
+    const atkMult = isIntroFirstBiomeBoss ? 1.55 : 2.65
+    const defMult = isIntroFirstBiomeBoss ? 1.35 : 2.65
+    boss.hp = Math.floor(boss.hp * hpMult)
+    boss.atk = Math.floor(boss.atk * atkMult)
+    boss.def = Math.floor(Math.max(1, boss.def * defMult))
   }
   if (options.enemyBlessed) {
     boss.hp = Math.floor(boss.hp * 3)
@@ -299,6 +305,9 @@ export async function runMiniBoss(runSeed: string, stageNumber: number, items: I
 
   await engine.onBattleSetup(ctx)
   const maxTicks = 200
+
+  // Record starting player HP so the client can derive max HP and seed UI correctly
+  log.push(`Your HP: ${player.hp}`)
 
   function resolveHit(attacker: ActorState, defender: ActorState) {
     const baseHit = attacker.kind === 'player' ? Math.max(0.5, Math.min(0.99, pst.accuracy)) : 0.78

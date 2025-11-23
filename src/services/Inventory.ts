@@ -115,3 +115,20 @@ export async function decrementLoadout(itemId: string, amount = 1): Promise<bool
     return !upd.error
   }
 }
+
+export async function addInventoryItem(itemId: string, stacks = 1): Promise<boolean> {
+  const { data: auth } = await supabase.auth.getUser()
+  const uid = auth.user?.id
+  if (!uid || !itemId || stacks <= 0) return false
+  const existing = await supabase
+    .from('inventory_items')
+    .select('stacks')
+    .eq('user_id', uid)
+    .eq('item_id', itemId)
+    .maybeSingle()
+  const total = (existing.data?.stacks ?? 0) + stacks
+  const { error } = await supabase
+    .from('inventory_items')
+    .upsert({ user_id: uid, item_id: itemId, stacks: total }, { onConflict: 'user_id,item_id' })
+  return !error
+}

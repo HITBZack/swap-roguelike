@@ -145,11 +145,21 @@ export class GameScene extends Phaser.Scene {
         const baseScale = baseScaleRaw * 0.72
         btnImg.setScale(baseScale)
 
-        const glow = this.add.image(btnImg.x, btnImg.y, 'ui:start_run').setOrigin(0.5)
-        glow.setScale(baseScale * 1.08)
+        // Soft rectangular glow behind the button instead of a second image, to avoid ghosting
+        const glowPaddingX = 18
+        const glowPaddingY = 10
+        const glow = this.add.rectangle(
+          btnImg.x,
+          btnImg.y,
+          btnImg.width * baseScale + glowPaddingX,
+          btnImg.height * baseScale + glowPaddingY,
+          0x1f2937,
+          0.9
+        ).setOrigin(0.5)
+        glow.setStrokeStyle(1, 0x4f46e5)
         glow.setBlendMode(Phaser.BlendModes.ADD)
-        glow.setTint(0x99ccff)
         glow.setAlpha(0)
+        glow.setDepth(btnImg.depth - 1)
 
         const btnZone = this.add.zone(btnImg.x, btnImg.y, btnImg.width * baseScale, btnImg.height * baseScale)
           .setOrigin(0.5)
@@ -170,7 +180,7 @@ export class GameScene extends Phaser.Scene {
           } else if (state === 'disabled') {
             btnImg.setScale(baseScale * 0.96)
             btnImg.setTint(0x9ca3af)
-            // Hide glow fully in disabled state so we don't visually suggest two buttons
+            // Hide glow fully in disabled state so there is no lingering after-image
             glow.setAlpha(0)
           }
         }
@@ -204,7 +214,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         // Simple intro animation: fade/slide panel group in from below
-        const panelTargets: Phaser.GameObjects.GameObject[] = [panel, title, tips, btnImg]
+        const panelTargets: Phaser.GameObjects.GameObject[] = [panel, title, tips, glow, btnImg]
         panelTargets.forEach(obj => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const o = obj as any
@@ -240,6 +250,20 @@ export class GameScene extends Phaser.Scene {
       this.add.text(centerX, 8, `Seed: ${run?.seed ?? 'n/a'}`, { fontFamily: 'sans-serif', fontSize: '12px', color: '#7a83c8' }).setOrigin(0.5, 0)
 
       const stage: StagePlan | null = gameManager.getCurrentStage()
+
+      // Small debug HUD: show whether this run is using intro-mode stage scripting
+      const introFlag = gameManager.isIntroMode()
+      if (stage) {
+        const introText = introFlag ? 'Intro: yes' : 'Intro: no'
+        const introLabel = this.add.text(this.cameras.main.width - 12, 42, introText, {
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          color: '#9db0ff',
+          align: 'right',
+        }).setOrigin(1, 0)
+        introLabel.setAlpha(0)
+        this.tweens.add({ targets: introLabel, alpha: 1, duration: 160, ease: 'Quad.out', delay: 60 })
+      }
 
       // Inform host UI whether this stage is immediately autoplay-ready.
       // For choice/unique, we pause until a decision is made and Next Stage is created.
@@ -348,6 +372,8 @@ export class GameScene extends Phaser.Scene {
         return null
       }
 
+      let lastRunItemAnim: { id: string; kind: 'gain' | 'loss' } | null = null
+
       function renderItemsPanel(): void {
         itemsGroup.removeAll(true)
         const effective = summarizeItems(gameManager.getEffectiveRunItems())
@@ -403,13 +429,77 @@ export class GameScene extends Phaser.Scene {
               itemsGroup.add(dot)
             }
           }
+          // Apply a small one-shot animation when this item was just gained or used
+          if (lastRunItemAnim && lastRunItemAnim.id === rec.id) {
+            const kind = lastRunItemAnim.kind
+            if (kind === 'gain') {
+              box.setAlpha(0)
+              that.tweens.add({
+                targets: box,
+                alpha: 1,
+                scaleX: 1.06,
+                scaleY: 1.06,
+                yoyo: true,
+                duration: 220,
+                ease: 'Quad.out',
+              })
+            } else {
+              that.tweens.add({
+                targets: box,
+                alpha: { from: 1, to: 0.6 },
+                scaleX: 0.96,
+                scaleY: 0.96,
+                yoyo: true,
+                duration: 180,
+                ease: 'Quad.inOut',
+              })
+            }
+          }
+
           // Click to open expanded modal with this item pre-selected
           const tileHit = that.add.zone(x, y, tileSize, tileSize).setOrigin(0).setInteractive({ useHandCursor: true })
           tileHit.on('pointerup', () => openItemsModal(rec.id))
           itemsGroup.add(tileHit)
         })
+
+        // Clear anim marker after one render so it does not keep replaying
+        lastRunItemAnim = null
       }
       const that = this
+
+      const triggerRunItemAnim = (id: string, kind: 'gain' | 'loss') => {
+        lastRunItemAnim = { id, kind }
+        renderItemsPanel()
+      }
+
+      const showRunItemPopup = (itemId: string, x: number, y: number) => {
+        const imgKey = resolveItemImgKey(itemId)
+        if (!imgKey || !that.textures.exists(imgKey)) return
+        const icon = that.add.image(x, y + 8, imgKey).setOrigin(0.5, 1).setDepth(360)
+        const maxSize = 28
+        const sw = maxSize / icon.width
+        const sh = maxSize / icon.height
+        icon.setScale(Math.min(sw, sh))
+        icon.setAlpha(0)
+        that.tweens.add({
+          targets: icon,
+          y: y - 4,
+          alpha: 1,
+          duration: 220,
+          ease: 'Quad.out',
+          onComplete: () => {
+            that.tweens.add({
+              targets: icon,
+              alpha: 0,
+              y: y - 16,
+              duration: 260,
+              delay: 260,
+              ease: 'Quad.in',
+              onComplete: () => { icon.destroy() },
+            })
+          },
+        })
+      }
       function getTotalPages(): number {
         const effective = summarizeItems(gameManager.getEffectiveRunItems())
         const pageSize = cols * rowsVisible
@@ -559,7 +649,7 @@ export class GameScene extends Phaser.Scene {
               info.setText(`${titleLine}\n${desc}`)
               renderModalPage()
               updatePagerModal()
-            })
+            }, 'Sacrifice a chunk of your maximum health to greatly increase your damage for the rest of the run.')
             tile.add(hit)
 
             grid.add(tile)
@@ -630,26 +720,62 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
+      // Boss fight presentation state (slow, turn-based over autoplay ticks)
+      let bossSteps: Array<{ lines: string[]; bossHp: number }> | null = null
+      let bossStepIndex = 0
+      let bossMaxHp = 1
+      let bossHpBarFill: Phaser.GameObjects.Rectangle | null = null
+      let playerHpBarFill: Phaser.GameObjects.Rectangle | null = null
+      let playerHpBarBaseW = 0
+      let playerMaxHp = 1
+      let minPlayerHp = 1
+      let playerHpText: Phaser.GameObjects.Text | null = null
+
       // Place player character near bottom inside frame
       let playerKey = this.playerKeys[0]
+      let playerSprite: Phaser.GameObjects.Image | null = null
       const selectedSprite = useAppState.getState().player.characterSprite
       if (selectedSprite && this.textures.exists(selectedSprite)) {
         playerKey = selectedSprite
       }
       if (playerKey) {
-        const p = this.add.image(frame.x, frame.y + frame.displayHeight * 0.30, playerKey).setOrigin(0.5, 1)
+        playerSprite = this.add.image(frame.x, frame.y + frame.displayHeight * 0.30, playerKey).setOrigin(0.5, 1)
         const maxPW = frame.displayWidth * 0.20
         const maxPH = frame.displayHeight * 0.22
-        const spw = maxPW / p.width
-        const sph = maxPH / p.height
-        p.setScale(Math.min(spw, sph))
-        p.setDepth(30)
+        const spw = maxPW / playerSprite.width
+        const sph = maxPH / playerSprite.height
+        playerSprite.setScale(Math.min(spw, sph))
+        playerSprite.setDepth(30)
+
+        // For boss combats, show a full HP bar under the player as soon as the scene loads,
+        // so refreshing into a boss stage still shows a meaningful bar even before combat resolves.
+        if (stage?.type === 'combat' && stage.combatType === 'boss' && selectedEnemyIsBoss && !playerHpBarFill) {
+          const barW = playerSprite.displayWidth * 0.9
+          const barH = 8
+          const barX = playerSprite.x
+          const barY = playerSprite.y + 6
+          const bg = this.add.rectangle(barX, barY, barW, barH, 0x111827, 0.9)
+            .setOrigin(0.5, 0)
+            .setDepth(300)
+          bg.setStrokeStyle(1, 0x4b5563)
+          playerHpBarFill = this.add.rectangle(barX - barW / 2, barY + 1, barW, barH - 2, 0x22c55e, 1)
+            .setOrigin(0, 0)
+            .setDepth(301)
+          playerHpBarBaseW = barW
+          playerHpBarFill.displayWidth = barW
+          // Place HP text just below the bar for better legibility
+          playerHpText = this.add.text(barX, barY + barH + 6, '', {
+            fontFamily: 'monospace',
+            fontSize: '11px',
+            color: '#9db0ff',
+          }).setOrigin(0.5, 0).setDepth(302)
+        }
       }
 
       // Battle Log panel
       const panelX = 12
       const panelY = 12 + itemsH + 10
-      const panelW = Math.floor(itemsW)
+      const panelW = Math.floor(itemsW) // keep compact to avoid overlapping arena UI
       const panelH = 300
       this.add.rectangle(panelX, panelY, panelW, panelH, 0x0f1226, 0.8).setOrigin(0)
       this.add.rectangle(panelX, panelY, panelW, panelH).setStrokeStyle(1, 0x2a2f55).setOrigin(0)
@@ -658,30 +784,54 @@ export class GameScene extends Phaser.Scene {
       // Text area is clipped to stay inside the panel
       const logClipTop = panelY + 24
       const logClipHeight = panelH - (logClipTop - panelY) - 4
-      const logTextObj = this.add.text(panelX + 4, logClipTop, '', {
-        fontFamily: 'monospace',
-        fontSize: '12px',
-        color: '#b3c0ff',
-        lineSpacing: 2,
-        wordWrap: { width: panelW - 8 },
-      }).setOrigin(0)
-      logTextObj.setAlpha(0)
       const logMaskG = this.add.graphics()
       logMaskG.fillStyle(0xffffff, 1)
       logMaskG.fillRect(panelX, logClipTop, panelW, logClipHeight)
       logMaskG.setVisible(false)
       const logMask = logMaskG.createGeometryMask()
-      logTextObj.setMask(logMask)
+
+      // Container for per-line colored log text
+      const logContainer = this.add.container(panelX, logClipTop)
+      logContainer.setMask(logMask)
+      logContainer.setAlpha(0)
 
       // Lightweight log buffer and on-screen log
       const scene = this
       let logBuffer = ''
+
+      function getLineColor(line: string): string {
+        const trimmed = line.trim()
+        if (!trimmed) return '#6b7280'
+        if (/Outcome:/i.test(trimmed)) return '#facc15'
+        if (/^You hit for/i.test(trimmed)) return '#bbf7d0' // player damage
+        if (/^Enemy hits/i.test(trimmed)) return '#fecaca' // enemy damage
+        if (/miss(ed)?/i.test(trimmed)) return '#9ca3af' // misses
+        if (/You lost a life/i.test(trimmed)) return '#fca5a5'
+        if (/Enemy defeated!/i.test(trimmed) || /Victory!/i.test(trimmed)) return '#bef264'
+        if (/You were defeated/i.test(trimmed) || /\bDefeat\b/i.test(trimmed)) return '#fecaca'
+        if (/golden light washes over you/i.test(trimmed)) return '#fde68a'
+        return '#b3c0ff'
+      }
+
       function updateLog(text: string, _toBottom = true) {
         logBuffer = text
-        logTextObj.setText(text)
-        if (logTextObj.alpha < 1) {
+        const lines = text.split('\n')
+        logContainer.removeAll(true)
+        let y = 0
+        for (const raw of lines) {
+          const color = getLineColor(raw)
+          const t = scene.add.text(4, y, raw, {
+            fontFamily: 'monospace',
+            fontSize: '11px',
+            color,
+            wordWrap: { width: panelW - 8 },
+          }).setOrigin(0)
+          logContainer.add(t)
+          y += t.height + 1
+        }
+        if (logContainer.alpha < 1 && lines.length > 0) {
           scene.tweens.add({
-            targets: logTextObj,
+            targets: logContainer,
             alpha: 1,
             duration: 200,
             ease: 'Quad.out'
@@ -713,19 +863,13 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.tweens.add({
-          targets: logTextObj,
+          targets: logContainer,
           alpha: 0,
           duration: 160,
           ease: 'Quad.out',
           onComplete: () => { if (!enemySprite) void doAdvance() }
         })
       }
-
-      // Boss fight presentation state (slow, turn-based over autoplay ticks)
-      let bossSteps: Array<{ lines: string[]; bossHp: number }> | null = null
-      let bossStepIndex = 0
-      let bossMaxHp = 1
-      let bossHpBarFill: Phaser.GameObjects.Rectangle | null = null
 
       const advanceBossStep = () => {
         if (!bossSteps || bossStepIndex >= bossSteps.length) return
@@ -735,6 +879,23 @@ export class GameScene extends Phaser.Scene {
         if (bossHpBarFill && bossMaxHp > 0) {
           const pct = Math.max(0, Math.min(1, step.bossHp / bossMaxHp))
           bossHpBarFill.scaleX = pct
+        }
+        // Derive latest player HP from all revealed log text so far (fixes one-turn delay)
+        if (playerHpBarFill && playerHpBarBaseW > 0) {
+          const hpRegex = /Your HP:\s*(\d+)/gi
+          let match: RegExpExecArray | null
+          let lastHp: number | null = null
+          while ((match = hpRegex.exec(logBuffer)) !== null) {
+            lastHp = parseInt(match[1] ?? '0', 10) || 0
+          }
+          if (lastHp != null) {
+            const denom = playerMaxHp > 0 ? playerMaxHp : lastHp || 1
+            const pPct = Math.max(0, Math.min(1, lastHp / denom))
+            playerHpBarFill.displayWidth = playerHpBarBaseW * pPct
+            if (playerHpText) {
+              playerHpText.setText(`${lastHp}/${denom}`)
+            }
+          }
         }
         bossStepIndex += 1
       }
@@ -816,37 +977,87 @@ export class GameScene extends Phaser.Scene {
                 .setDepth(301)
             }
 
+            // Player HP bar under the player sprite for this boss combat
+            if (!playerHpBarFill && playerSprite) {
+              const barW = playerSprite.displayWidth * 0.9
+              const barH = 8
+              const barX = playerSprite.x
+              const barY = playerSprite.y + 6
+              const bg = this.add.rectangle(barX, barY, barW, barH, 0x111827, 0.9)
+                .setOrigin(0.5, 0)
+                .setDepth(300)
+              bg.setStrokeStyle(1, 0x4b5563)
+              playerHpBarFill = this.add.rectangle(barX - barW / 2, barY + 1, barW, barH - 2, 0x22c55e, 1)
+                .setOrigin(0, 0)
+                .setDepth(301)
+              // Track base width and start at full HP so the bar does not appear empty before steps advance
+              playerHpBarBaseW = barW
+              playerHpBarFill.displayWidth = barW
+            }
+
             // Parse log into steps keyed by boss HP lines
             const steps: Array<{ lines: string[]; bossHp: number }> = []
             let currentLines: string[] = []
-            let lastHp = 0
-            const hpRegex = /Boss HP:\s*(\d+)/i
+            let lastBossHp = 0
+            const bossHpRegex = /Boss HP:\s*(\d+)/i
             for (const line of result.log) {
               currentLines.push(line)
-              const m = hpRegex.exec(line)
-              if (m) {
-                lastHp = parseInt(m[1] ?? '0', 10) || 0
-                steps.push({ lines: currentLines, bossHp: lastHp })
+              const bm = bossHpRegex.exec(line)
+              if (bm) {
+                lastBossHp = parseInt(bm[1] ?? '0', 10) || 0
+                steps.push({ lines: currentLines, bossHp: lastBossHp })
                 currentLines = []
               }
             }
             if (currentLines.length > 0) {
-              steps.push({ lines: currentLines, bossHp: lastHp })
+              steps.push({ lines: currentLines, bossHp: lastBossHp })
             }
             bossSteps = steps.length > 0 ? steps : null
             bossStepIndex = 0
             bossMaxHp = bossSteps && bossSteps.length > 0 ? Math.max(...bossSteps.map(s => s.bossHp)) || 1 : 1
-            if (bossHpBarFill) {
-              bossHpBarFill.scaleX = 1
+
+            // Estimate player max/min HP over the whole battle from the full log (independent of boss steps)
+            const hpRegexAll = /Your HP:\s*(\d+)/gi
+            let matchAll: RegExpExecArray | null
+            let seenHp: number[] = []
+            while ((matchAll = hpRegexAll.exec(result.log.join('\n'))) !== null) {
+              const v = parseInt(matchAll[1] ?? '0', 10) || 0
+              seenHp.push(v)
+            }
+            if (seenHp.length > 0) {
+              playerMaxHp = Math.max(...seenHp)
+              minPlayerHp = Math.min(...seenHp)
+            } else {
+              playerMaxHp = 1
+              minPlayerHp = 1
+            }
+
+            // Seed the on-screen HP label at the start of the boss fight
+            if (playerHpText && playerMaxHp > 0) {
+              playerHpText.setText(`${playerMaxHp}/${playerMaxHp}`)
             }
 
             const onBossFinished = async () => {
               const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
               const cur = logBuffer ? `${logBuffer}\n` : ''
               updateLog(cur + `Outcome: ${outcomeText}`)
+              if (playerHpBarFill && playerMaxHp > 0 && playerHpBarBaseW > 0) {
+                const minPct = Math.max(0, Math.min(1, minPlayerHp / playerMaxHp))
+                this.tweens.add({
+                  targets: playerHpBarFill,
+                  displayWidth: playerHpBarBaseW * minPct,
+                  duration: 260,
+                  ease: 'Quad.out'
+                })
+              }
               void recordBattleStats(result.enemiesKilled, stageNumber)
               gameManager.addEnemiesKilled(result.enemiesKilled)
               if (result.outcome === 'win') {
+                const wasIntroFirstBiomeBoss = introFlag && stage.combatType === 'boss' && run.biomeIndex === 0
+                // If this was the intro-mode first biome boss, end intro mode for this session
+                if (wasIntroFirstBiomeBoss) {
+                  gameManager.setIntroMode(false)
+                }
                 void markMyIntroDone()
                 gameManager.incBossDefeated()
                 if (selectedEnemyIsBlessed) {
@@ -859,30 +1070,70 @@ export class GameScene extends Phaser.Scene {
                       const chosen = owned[pickIdx]
                       gameManager.addBlessedItem(chosen)
                       await gameManager.persistStagePlan()
-                      renderItemsPanel()
                       const cur2 = logBuffer ? `${logBuffer}\n` : ''
                       updateLog(cur2 + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
                     }
                   }
                 }
-                // After boss victory, allow advancing
-                goNextStage = async () => {
-                  if (isAdvancingStage) return
-                  isAdvancingStage = true
-                  canAutoAdvance = false
-                  bossSteps = null
-                  bossHpBarFill = null
-                  await gameManager.advance()
-                  this.scene.restart()
-                }
-                canAutoAdvance = true
                 if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+                  window.dispatchEvent(new CustomEvent('run:item-save-offer', { detail: { source: 'boss' } }))
                 }
-                makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
-                  if (!goNextStage) return
-                  void goNextStage()
-                })
+                if (wasIntroFirstBiomeBoss) {
+                  // For the intro boss, treat victory as the natural end of the intro run.
+                  const cam = this.cameras.main
+                  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+                    void (async () => {
+                      try {
+                        const prog = gameManager.getBiomeProgress()
+                        const stageIdx = prog.stageIndex ?? 0
+                        const xpGained = Math.max(0, 10 + stageIdx * 5)
+                        const xpRes = await addMyXp(xpGained)
+                        const metrics = gameManager.getRunMetrics()
+                        const currentRun = gameManager.getRun()
+                        const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
+                          window.dispatchEvent(new CustomEvent('game:run-ended', {
+                            detail: {
+                              reason: 'manual',
+                              xpGained,
+                              level: xpRes?.level,
+                              xp: xpRes?.xp,
+                              metrics,
+                              seed: currentRun?.seed,
+                              biomeId: stage.biomeId,
+                              stageIndex: currentRun?.stageIndex,
+                              biomesCompleted,
+                            }
+                          }))
+                        }
+                      } catch {}
+                      await completeRunAndMaybeReward()
+                      gameManager.resetRun()
+                      this.scene.stop('GameScene'); this.scene.start('GameScene')
+                    })()
+                  })
+                  cam.fadeOut(200, 0, 0, 0)
+                } else {
+                  // After non-intro boss victory, allow advancing as usual
+                  goNextStage = async () => {
+                    if (isAdvancingStage) return
+                    isAdvancingStage = true
+                    canAutoAdvance = false
+                    bossSteps = null
+                    bossHpBarFill = null
+                    await gameManager.advance()
+                    this.scene.restart()
+                  }
+                  canAutoAdvance = true
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('game:autoplay-stage-ready', { detail: { ready: true } }))
+                  }
+                  makeImgBtn('ui:nextStage', rightSlotX, bottomY, () => {
+                    if (!goNextStage) return
+                    void goNextStage()
+                  })
+                }
               } else {
                 const livesLeft = gameManager.decrementLife()
                 await gameManager.persistStagePlan()
@@ -979,7 +1230,38 @@ export class GameScene extends Phaser.Scene {
             void recordBattleStats(result.enemiesKilled, stageNumber)
             gameManager.addEnemiesKilled(result.enemiesKilled)
             if (result.outcome === 'win') {
-              if (stage.combatType === 'miniboss') gameManager.incMinibossDefeated()
+              if (stage.combatType === 'miniboss') {
+                gameManager.incMinibossDefeated()
+                const rewardBand = gameManager.getMinibossRewardBand()
+                if (rewardBand === 'common_rare') {
+                  const rng = fromSeed(`${run.seed}|${stageNumber}|miniboss_reward`)
+                  const allowed = new Set(['common', 'rare'])
+                  const pool = Array.from(itemRegistry.values())
+                    .filter(def => allowed.has(def.rarity))
+                    .map(def => def.id)
+                  const ids = pool.length > 0 ? pool : Array.from(itemRegistry.keys())
+                  if (ids.length > 0) {
+                    const idx = int(rng, 0, ids.length - 1)
+                    const rewardId = ids[idx]
+                    const before = gameManager.getRunItems()
+                    const updated = before.slice()
+                    updated.push({ id: rewardId, stacks: 1 })
+                    gameManager.setRunItems(updated)
+                    gameManager.addItemsGained(1)
+                    await gameManager.persistRunItems()
+                    const cur2 = logBuffer ? `${logBuffer}\n` : ''
+                    updateLog(cur2 + `The cave rewards you: you gain a ${rewardId}.`)
+
+                    // Visual reward popup near the enemy using the item icon
+                    const popupX = enemySprite ? enemySprite.x : frame.x
+                    const popupY = enemySprite ? enemySprite.y - (enemySprite.displayHeight * 0.35) : (frame.y - frame.displayHeight * 0.08)
+                    showRunItemPopup(rewardId, popupX, popupY)
+                    triggerRunItemAnim(rewardId, 'gain')
+                  }
+                  gameManager.setMinibossRewardBand(undefined)
+                  await gameManager.persistStagePlan()
+                }
+              }
               // Blessed enemy reward: 25% chance to bless a random owned item for the remainder of the run
               if (selectedEnemyIsBlessed) {
                 const rng = fromSeed(`${run.seed}|${stageNumber}|bless`)
@@ -996,6 +1278,9 @@ export class GameScene extends Phaser.Scene {
                     updateLog(cur + `A golden light washes over you. Your ${chosen} is blessed for this run.`)
                   }
                 }
+              }
+              if (stage.combatType === 'boss' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('run:item-save-offer', { detail: { source: 'boss' } }))
               }
             }
             if (result.outcome === 'loss') {
@@ -1109,13 +1394,16 @@ export class GameScene extends Phaser.Scene {
           return
         }
         // Position higher so bottom Start/Next slots remain untouched
-        const btnYStart = centerY - 24
-        const spacing = 32
+        const btnYStart = centerY - 30
+        const spacing = 44
+
+        // Shared max width for choice buttons and description text, responsive to viewport
+        const maxChoiceWidth = Math.min(440 * sFrame, this.cameras.main.width - 80)
 
         // Description box for hovered choice
-        const descWidth = Math.min(420 * sFrame, this.cameras.main.width - 40)
-        const descY = btnYStart + Math.max(choiceOptions.length, 2) * spacing + 12
-        const descBg = this.add.rectangle(centerX, descY, descWidth, 52, 0x020617, 0.9)
+        const descWidth = Math.min(460 * sFrame, this.cameras.main.width - 40)
+        const descY = btnYStart + Math.max(choiceOptions.length, 2) * spacing + 14
+        const descBg = this.add.rectangle(centerX, descY, descWidth, 64, 0x020617, 0.9)
           .setOrigin(0.5)
           .setDepth(110)
         descBg.setStrokeStyle(1, 0x1f2937)
@@ -1140,8 +1428,24 @@ export class GameScene extends Phaser.Scene {
           }
         }
 
+        const hideChoiceDescription = () => {
+          if (descBg.alpha <= 0 && descText.alpha <= 0) return
+          this.tweens.add({
+            targets: [descBg, descText],
+            alpha: 0,
+            duration: 160,
+            ease: 'Quad.out',
+          })
+        }
         const buttons: Phaser.GameObjects.Text[] = choiceOptions.map((opt: any, i: number) => {
-          const btn = this.add.text(centerX, btnYStart + i * spacing, `${opt.title}`, { fontFamily: 'sans-serif', fontSize: '14px', color: '#cfe1ff', backgroundColor: '#101531' }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(120)
+          const btn = this.add.text(centerX, btnYStart + i * spacing, `${opt.title}`, {
+            fontFamily: 'sans-serif',
+            fontSize: '14px',
+            color: '#cfe1ff',
+            backgroundColor: '#101531',
+            align: 'center',
+            wordWrap: { width: maxChoiceWidth, useAdvancedWrap: true },
+          }).setPadding(14, 8, 14, 8).setOrigin(0.5).setDepth(120)
           btn.setInteractive({ useHandCursor: true })
           btn.setStroke('#2a2f55', 1)
           btn.setAlpha(0)
@@ -1160,7 +1464,10 @@ export class GameScene extends Phaser.Scene {
               showChoiceDescription(opt.description)
             }
           })
-          btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
+          btn.on('pointerout', () => {
+            btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.()
+            hideChoiceDescription()
+          })
           btn.on('pointerdown', async () => {
             // disable all buttons to avoid double-choose
             buttons.forEach((b: Phaser.GameObjects.Text) => b.disableInteractive().setAlpha(0.5))
@@ -1173,7 +1480,38 @@ export class GameScene extends Phaser.Scene {
               const delta = afterTotal - beforeTotal
               if (delta > 0) gameManager.addItemsGained(delta)
               gameManager.setRunItems(after)
-              renderItemsPanel()
+
+              // Animate a representative item that changed
+              const beforeCounts = new Map<string, number>()
+              before.forEach((it: { id: string; stacks?: number }) => {
+                beforeCounts.set(it.id, (beforeCounts.get(it.id) ?? 0) + (it.stacks ?? 0))
+              })
+              const afterCounts = new Map<string, number>()
+              after.forEach((it: { id: string; stacks?: number }) => {
+                afterCounts.set(it.id, (afterCounts.get(it.id) ?? 0) + (it.stacks ?? 0))
+              })
+              let animId: string | null = null
+              let animKind: 'gain' | 'loss' = 'gain'
+              const allIds = new Set<string>([...beforeCounts.keys(), ...afterCounts.keys()])
+              for (const id of allIds) {
+                const beforeC = beforeCounts.get(id) ?? 0
+                const afterC = afterCounts.get(id) ?? 0
+                if (afterC > beforeC) {
+                  animId = id
+                  animKind = 'gain'
+                  break
+                }
+                if (afterC < beforeC) {
+                  animId = id
+                  animKind = 'loss'
+                  break
+                }
+              }
+              if (animId) {
+                triggerRunItemAnim(animId, animKind)
+              } else {
+                renderItemsPanel()
+              }
               // Persist run items so changes survive reloads
               await gameManager.persistRunItems()
             }
@@ -1185,55 +1523,13 @@ export class GameScene extends Phaser.Scene {
               void recordChoiceStats(outcome.poorDelta)
             }
             if (outcome.triggerMiniboss) {
-              const result = await runMiniBoss(run.seed, stageNumber, gameManager.getRunItems())
-              const outcomeText = result.outcome === 'win' ? 'Victory!' : 'Defeat'
-              const cur = logBuffer ? `${logBuffer}\n` : ''
-              updateLog(cur + [`Mini-boss Outcome: ${outcomeText}`, '', ...result.log].join('\n'))
-              void recordBattleStats(result.enemiesKilled, stageNumber)
-              gameManager.addEnemiesKilled(result.enemiesKilled)
-              if (result.outcome === 'win') gameManager.incMinibossDefeated()
-              if (result.outcome === 'loss') {
-                const livesLeft = gameManager.decrementLife()
-                await gameManager.persistStagePlan()
-                const cur2 = logBuffer ? `${logBuffer}\n` : ''
-                updateLog(cur2 + `You lost a life. Lives remaining: ${livesLeft}/3`)
-                if (livesLeft <= 0) {
-                  const cam = this.cameras.main
-                  cam.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-                    void (async () => {
-                      try {
-                        const prog = gameManager.getBiomeProgress()
-                        const stageIdx = prog.stageIndex ?? 0
-                        const xpGained = Math.max(0, 10 + stageIdx * 5)
-                        const xpRes = await addMyXp(xpGained)
-                        await incMyDeaths(1)
-                        const metrics = gameManager.getRunMetrics()
-                        const run = gameManager.getRun()
-                        const biomesCompleted = prog.biomeIndex != null ? Math.max(0, prog.biomeIndex) : 0
-                        if (typeof window !== 'undefined') {
-                          window.dispatchEvent(new CustomEvent('profile:changed', { detail: { level: xpRes?.level, xp: xpRes?.xp } }))
-                          window.dispatchEvent(new CustomEvent('game:run-ended', {
-                            detail: {
-                              reason: 'death',
-                              xpGained,
-                              level: xpRes?.level,
-                              xp: xpRes?.xp,
-                              metrics,
-                              seed: run?.seed,
-                              biomeId: stage?.biomeId,
-                              stageIndex: run?.stageIndex,
-                              biomesCompleted,
-                            }
-                          }))
-                        }
-                      } catch {}
-                      await completeRunAndMaybeReward()
-                      gameManager.resetRun()
-                      this.scene.stop('GameScene'); this.scene.start('GameScene')
-                    })()
-                  })
-                  cam.fadeOut(200, 0, 0, 0)
+              const plan = gameManager.getCurrentStage()
+              if (plan) {
+                plan.forceNextMiniboss = true
+                if (outcome.minibossRewardBand) {
+                  plan.minibossRewardBand = outcome.minibossRewardBand
                 }
+                await gameManager.persistStagePlan()
               }
             }
             if (outcome.triggerBoss && stage) {
@@ -1307,8 +1603,8 @@ export class GameScene extends Phaser.Scene {
           updateLog(cur + desc)
           const pillar = placeFramedImage('unique:pillar')
           if (pillar) {
-            pillar.setAlpha(0)
-            this.tweens.add({ targets: pillar, alpha: 1, duration: 260, ease: 'Quad.out' })
+            // Show the pedestal instantly to avoid a blank-looking stage
+            pillar.setAlpha(1)
           }
 
             const itemsNow = gameManager.getRunItems()
@@ -1379,7 +1675,7 @@ export class GameScene extends Phaser.Scene {
                 const afterTotal = updated.reduce((a, it) => a + (it.stacks ?? 0), 0)
                 const delta = afterTotal - beforeTotal
                 if (delta > 0) gameManager.addItemsGained(delta)
-                renderItemsPanel()
+                triggerRunItemAnim(rec.id, 'gain')
                 await gameManager.persistRunItems()
                 const cur3 = logBuffer ? `${logBuffer}\n` : ''
                 updateLog(cur3 + `The pedestal hums. Your ${rec.id} is duplicated.`)
@@ -1479,10 +1775,48 @@ export class GameScene extends Phaser.Scene {
             const subtitle = that.add.text(panel.x, title.y + title.displayHeight + 2, 'Choose an offering to accept a blessing', { fontFamily: 'monospace', fontSize: '12px', color: '#9db0ff' }).setOrigin(0.5, 0).setDepth(1002)
 
             const choiceCount = 4
-            const spacing = 30
-            const bottomMargin = 24
+            const spacing = 32
+            const topMargin = 60
+            const listTopY = panel.y - h / 2 + topMargin
             const totalHeight = (choiceCount - 1) * spacing
-            const firstY = panel.y + h / 2 - bottomMargin - totalHeight
+            const firstY = listTopY + totalHeight / 2
+
+            const descWidth = Math.min(w - 40, 420)
+            const descY = panel.y + h / 2 - 34
+            const descBg = that.add.rectangle(panel.x, descY, descWidth, 52, 0x020617, 0.9)
+              .setOrigin(0.5)
+              .setDepth(1002)
+            descBg.setStrokeStyle(1, 0x1f2937)
+            descBg.setAlpha(0)
+            const descText = that.add.text(panel.x - descWidth / 2 + 10, descY - 18, '', {
+              fontFamily: 'sans-serif',
+              fontSize: '12px',
+              color: '#cbd5f5',
+              wordWrap: { width: descWidth - 20 },
+            }).setOrigin(0, 0).setDepth(1003)
+            descText.setAlpha(0)
+
+            const showChoiceDesc = (text: string) => {
+              descText.setText(text)
+              if (descBg.alpha < 1 || descText.alpha < 1) {
+                that.tweens.add({
+                  targets: [descBg, descText],
+                  alpha: 1,
+                  duration: 160,
+                  ease: 'Quad.out',
+                })
+              }
+            }
+
+            const hideChoiceDesc = () => {
+              if (descBg.alpha <= 0 && descText.alpha <= 0) return
+              that.tweens.add({
+                targets: [descBg, descText],
+                alpha: 0,
+                duration: 160,
+                ease: 'Quad.out',
+              })
+            }
 
             const destroyModal = () => {
               overlay.destroy()
@@ -1515,7 +1849,7 @@ export class GameScene extends Phaser.Scene {
               buttons.forEach(b => b.disableInteractive().setAlpha(0.6))
             }
 
-            const makeChoiceBtn = (idx: number, label: string, onPick: () => Promise<void>) => {
+            const makeChoiceBtn = (idx: number, label: string, onPick: () => Promise<void>, desc: string) => {
               const btn = that.add.text(panel.x, firstY + idx * spacing, label, {
                 fontFamily: 'sans-serif',
                 fontSize: '14px',
@@ -1524,8 +1858,14 @@ export class GameScene extends Phaser.Scene {
               }).setPadding(10, 6, 10, 6).setOrigin(0.5).setDepth(1002)
               btn.setInteractive({ useHandCursor: true })
               btn.setStroke('#2a2f55', 1)
-              btn.on('pointerover', () => { btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff) })
-              btn.on('pointerout', () => { btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.() })
+              btn.on('pointerover', () => {
+                btn.setScale(1.05).setAlpha(0.98); (btn as any).setTint?.(0xbfd6ff)
+                showChoiceDesc(desc)
+              })
+              btn.on('pointerout', () => {
+                btn.setScale(1.0).setAlpha(1); (btn as any).clearTint?.()
+                hideChoiceDesc()
+              })
               btn.on('pointerdown', async () => {
                 disableButtons()
                 await onPick()
@@ -1550,9 +1890,9 @@ export class GameScene extends Phaser.Scene {
               ]
               const curLog = logBuffer ? `${logBuffer}\n` : ''
               updateLog(curLog + lines.join('\n'))
-            })
+            }, 'Sacrifice a chunk of your maximum health to greatly increase your damage for the rest of the run.')
 
-            // Xuq\'talv – reroll all items, with a chance for new items to become blessed
+            // Xuq'talv – reroll all items, with a chance for new items to become blessed
             makeChoiceBtn(1, "Petition Xuq'talv, The Archaizer", async () => {
               const before = gameManager.getRunItems()
               const totalStacks = before.reduce((acc, it) => acc + (it.stacks ?? 0), 0)
@@ -1600,7 +1940,7 @@ export class GameScene extends Phaser.Scene {
               }
               const curLog = logBuffer ? `${logBuffer}\n` : ''
               updateLog(curLog + lines.join('\n'))
-            })
+            }, 'Hand over your current possessions to be rewritten. You will receive a fresh set of items, with a chance for some to become blessed.')
 
             // Lenley Davids – status reflect flag only (mechanics to come from engine)
             makeChoiceBtn(2, 'Share tea with Lenley Davids', async () => {
@@ -1613,7 +1953,7 @@ export class GameScene extends Phaser.Scene {
               ]
               const curLog = logBuffer ? `${logBuffer}\n` : ''
               updateLog(curLog + lines.join('\n'))
-            })
+            }, 'Spend time with Lenley Davids. You gain a subtle status reflect effect for the rest of the run.')
 
             // Lal_glyph_bru_glyph_Ek_glyph_ – future bosses are globally blessed
             makeChoiceBtn(3, 'Gaze back at Lal\u001fbru\u001fEk\u001f', async () => {
@@ -1626,7 +1966,7 @@ export class GameScene extends Phaser.Scene {
               ]
               const curLog = logBuffer ? `${logBuffer}\n` : ''
               updateLog(curLog + lines.join('\n'))
-            })
+            }, 'Meet the gaze of the one who names you. Future bosses will arrive blessed, making them more dangerous but more rewarding.')
 
             overlay.on('pointerdown', () => { /* swallow clicks until a choice is made */ })
           }

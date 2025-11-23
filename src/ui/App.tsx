@@ -4,10 +4,11 @@ import { supabase } from '../lib/supabase'
 import { fetchMyProfile, spendMyStatPoint, type ProfileDTO } from '../lib/profile'
 import { AccountModal } from './AccountModal'
 import { PlayerCardModal } from './PlayerCardModal'
+import { GuildsModal } from './GuildsModal'
 import { ChatPanel } from './ChatPanel'
 import { useAppState } from '../lib/state'
 import { UsernameModal } from './UsernameModal'
-import { listInventory, listLoadout, equipItem, decrementLoadout, clearLoadout } from '../services/Inventory'
+import { listInventory, listLoadout, equipItem, decrementLoadout, clearLoadout, addInventoryItem } from '../services/Inventory'
 import { itemRegistry } from '../services/items/registry'
 import type { ItemInstance } from '../services/items/types'
 import { computeBaseStats, applyPermanentAllocations, applyItemModifiers } from '../services/player/Stats'
@@ -32,6 +33,7 @@ export function App(): JSX.Element {
   const [profile, setProfile] = useState<ProfileDTO | null>(null)
   const [openAccount, setOpenAccount] = useState(false)
   const [openCard, setOpenCard] = useState(false)
+  const [openGuilds, setOpenGuilds] = useState(false)
   const player = useAppState((s) => s.player)
   const needUsername = useAppState((s) => s.ui.needUsername)
   const [openCardUserId, setOpenCardUserId] = useState<string | null>(null)
@@ -41,7 +43,15 @@ export function App(): JSX.Element {
   const [toast, setToast] = useState<string | null>(null)
   const [runStats, setRunStats] = useState<{ seed: string | null; biome: string | null; stageIndex: number | null; lives: number | null; duration: string; progressPct: number; stageLabel: string; biomesCompleted: number; stageType: string | null }>(() => ({ seed: null, biome: null, stageIndex: null, lives: null, duration: '—', progressPct: 0, stageLabel: '—', biomesCompleted: 0, stageType: null }))
   const [metrics, setMetrics] = useState<{ enemiesKilled: number; minibosses: number; bosses: number; itemsGained: number }>({ enemiesKilled: 0, minibosses: 0, bosses: 0, itemsGained: 0 })
-  const [autoPlay, setAutoPlay] = useState<boolean>(true)
+  const [autoPlay, setAutoPlay] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    try {
+      const stored = window.localStorage.getItem('swapmmo:autoPlay')
+      if (stored === 'true') return true
+      if (stored === 'false') return false
+    } catch {}
+    return true
+  })
   const [autoPlayProgress, setAutoPlayProgress] = useState<number>(0)
   const [autoPlayCooling, setAutoPlayCooling] = useState<boolean>(false)
   const [autoPlaySpeed, setAutoPlaySpeed] = useState<0.5 | 1 | 1.5>(1)
@@ -49,6 +59,8 @@ export function App(): JSX.Element {
   const [deathSummaryPhase, setDeathSummaryPhase] = useState<'idle' | 'enter' | 'visible' | 'exit'>('idle')
   const [showAutoPlayHint, setShowAutoPlayHint] = useState(false)
   const [lastAllocatedKey, setLastAllocatedKey] = useState<string | null>(null)
+  const [itemSaveOpen, setItemSaveOpen] = useState(false)
+  const [itemSaveSelectedId, setItemSaveSelectedId] = useState<string | null>(null)
 
   const itemIconMap = useMemo(() => {
     const entries = Object.entries(itemImageUrls).map(([p, url]) => {
@@ -57,6 +69,16 @@ export function App(): JSX.Element {
       return [key, url as string]
     })
     return Object.fromEntries(entries) as Record<string, string>
+  }, [])
+
+  useEffect(() => {
+    const onItemSaveOffer = () => {
+      setItemSaveSelectedId(null)
+      setItemSaveOpen(true)
+      setAutoPlay(false)
+    }
+    window.addEventListener('run:item-save-offer', onItemSaveOffer as EventListener)
+    return () => window.removeEventListener('run:item-save-offer', onItemSaveOffer as EventListener)
   }, [])
 
   useEffect(() => {
@@ -70,13 +92,23 @@ export function App(): JSX.Element {
     gameManager.setAutoCombat(autoPlay)
   }, [autoPlay])
 
+  // Persist Auto-Play preference locally so it survives reloads
   useEffect(() => {
-    const introDone = !!profile?.is_intro_done
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem('swapmmo:autoPlay', autoPlay ? 'true' : 'false')
+    } catch {}
+  }, [autoPlay])
+
+  useEffect(() => {
+    // Do not override Auto-Play preference until we actually know intro status.
+    if (!profile) return
+    const introDone = !!profile.is_intro_done
     gameManager.setIntroMode(!introDone)
     if (!introDone && autoPlay) {
       setAutoPlay(false)
     }
-  }, [profile?.is_intro_done])
+  }, [profile, autoPlay])
 
   // Show a death / run-end summary overlay when the game signals a completed run
   useEffect(() => {
@@ -244,6 +276,29 @@ export function App(): JSX.Element {
     return () => { if (has) (history as any).scrollRestoration = prev }
   }, [])
 
+  useEffect(() => {
+    const onOpenCard = (e: Event) => {
+      const detail = (e as CustomEvent<{ userId?: string }>).detail
+      const uid = detail?.userId ?? null
+      setOpenCardUserId(uid)
+      setOpenCard(true)
+    }
+    window.addEventListener('social:open-player-card', onOpenCard as EventListener)
+    return () => {
+      window.removeEventListener('social:open-player-card', onOpenCard as EventListener)
+    }
+  }, [])
+
+  useEffect(() => {
+    const onOpenGuilds = () => {
+      setOpenGuilds(true)
+    }
+    window.addEventListener('social:open-guilds', onOpenGuilds as EventListener)
+    return () => {
+      window.removeEventListener('social:open-guilds', onOpenGuilds as EventListener)
+    }
+  }, [])
+
   // Guard against delayed scroll jumps: lock scroll until GameScene reports ready
   useEffect(() => {
     const prevOverflow = document.body.style.overflowY
@@ -407,6 +462,22 @@ export function App(): JSX.Element {
           >
             {displayName || 'Guest'}
           </div>
+          <button
+            onClick={() => setOpenGuilds(true)}
+            className="hover-chip"
+            style={{
+              height: 24,
+              padding: '0 10px',
+              borderRadius: 999,
+              border: '1px solid #2a2f55',
+              background: '#0f1226',
+              color: '#e5e7ff',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            Guilds
+          </button>
           <button
             onClick={() => setOpenAccount(true)}
             aria-label="Open account settings"
@@ -821,30 +892,50 @@ export function App(): JSX.Element {
           >
             <div style={{ fontSize: 15, fontWeight: 600 }}>Tip: Enable Auto-Play</div>
             <div style={{ color: '#9ca3af' }}>
-              You can let runs play themselves. Use the Auto-Play toggle above the arena to have the game advance stages for you.
+              You can let runs play themselves. Use the Auto-Play toggle above the arena, next to the progress bar, to have the game advance stages for you.
             </div>
-            <button
-              type="button"
-              onClick={() => setShowAutoPlayHint(false)}
-              className="hover-chip"
-              style={{
-                justifySelf: 'end',
-                padding: '6px 10px',
-                borderRadius: 999,
-                border: '1px solid #4f46e5',
-                background: 'linear-gradient(135deg,#4f46e5,#6366f1)',
-                color: '#e5e7ff',
-                fontSize: 12,
-              }}
-            >
-              Got it
-            </button>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setAutoPlay(true)
+                  setShowAutoPlayHint(false)
+                }}
+                className="hover-chip"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  border: '1px solid #4f46e5',
+                  background: 'linear-gradient(135deg,#4f46e5,#6366f1)',
+                  color: '#e5e7ff',
+                  fontSize: 12,
+                }}
+              >
+                Turn on Auto-Play
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAutoPlayHint(false)}
+                className="hover-chip"
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 999,
+                  border: '1px solid #1f2937',
+                  background: '#020617',
+                  color: '#9ca3af',
+                  fontSize: 12,
+                }}
+              >
+                Not now
+              </button>
+            </div>
           </div>
         </div>
       )}
       {openAccount && (
         <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
       )}
+      <GuildsModal open={openGuilds} onClose={() => setOpenGuilds(false)} />
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />
       <UsernameModal open={Boolean(needUsername)} />
       {pendingStatPoints > 0 && (
@@ -924,14 +1015,154 @@ export function App(): JSX.Element {
           </div>
         </div>
       )}
+      {itemSaveOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.65)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 1900,
+          }}
+          onClick={() => { setItemSaveOpen(false); setItemSaveSelectedId(null) }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(520px, 92vw)',
+              maxHeight: '80vh',
+              borderRadius: 12,
+              background: '#020617',
+              border: '1px solid #1f2937',
+              boxShadow: '0 20px 48px rgba(0,0,0,0.75)',
+              padding: 16,
+              display: 'grid',
+              rowGap: 10,
+              color: '#e5e7ff',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Keep an item from this biome</div>
+              <button
+                type="button"
+                onClick={() => { setItemSaveOpen(false); setItemSaveSelectedId(null) }}
+                className="hover-chip"
+                style={{
+                  marginLeft: 'auto',
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                  border: '1px solid #4b5563',
+                  background: '#020617',
+                  color: '#e5e7ff',
+                  fontSize: 11,
+                }}
+              >
+                Skip
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: '#9ca3af' }}>
+              Pick one item from your current run to add to your permanent inventory.
+            </div>
+            {(() => {
+              const runItems = gameManager.getRunItems() ?? []
+              const map = new Map<string, number>()
+              for (const it of runItems) {
+                map.set(it.id, (map.get(it.id) ?? 0) + (it.stacks ?? 1))
+              }
+              const list = Array.from(map.entries()).map(([id, stacks]) => ({ id, stacks }))
+              if (!list.length) {
+                return (
+                  <div style={{ fontSize: 12, color: '#9ca3af' }}>No items from this run to keep.</div>
+                )
+              }
+              return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: 10, marginTop: 4 }}>
+                  {list.map(({ id, stacks }) => {
+                    const def = itemRegistry.get(id)
+                    const iconUrl = def?.imageKey ? itemIconMap[def.imageKey.toLowerCase()] : undefined
+                    const selected = itemSaveSelectedId === id
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setItemSaveSelectedId(id)}
+                        className="hover-chip"
+                        style={{
+                          textAlign: 'left',
+                          padding: 8,
+                          borderRadius: 10,
+                          border: selected ? '1px solid #4f46e5' : '1px solid #1f2937',
+                          background: selected ? '#0b1030' : '#020617',
+                          display: 'grid',
+                          gridTemplateColumns: '32px 1fr',
+                          columnGap: 8,
+                          rowGap: 2,
+                          fontSize: 12,
+                          boxShadow: selected ? '0 0 14px rgba(79,70,229,0.65)' : 'none',
+                        }}
+                      >
+                        <div style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #262c4f', background: '#020617', display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
+                          {iconUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={iconUrl} alt={def?.name ?? id} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', padding: 2 }} />
+                          ) : (
+                            <span style={{ fontSize: 11 }}>{(def?.name ?? id).slice(0, 2).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div style={{ display: 'grid', rowGap: 2 }}>
+                          <div style={{ fontWeight: 500, color: '#e5e7ff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{def?.name ?? id}</div>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>Stacks in run: {stacks}</div>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
+              <button
+                type="button"
+                disabled={!itemSaveSelectedId}
+                onClick={async () => {
+                  if (!itemSaveSelectedId) return
+                  const ok = await addInventoryItem(itemSaveSelectedId, 1)
+                  if (ok) {
+                    const def = itemRegistry.get(itemSaveSelectedId)
+                    showToast(`${def?.name ?? itemSaveSelectedId} added to inventory`)
+                  } else {
+                    showToast('Failed to save item')
+                  }
+                  setItemSaveOpen(false)
+                  setItemSaveSelectedId(null)
+                }}
+                className="hover-chip"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 999,
+                  border: '1px solid',
+                  borderColor: itemSaveSelectedId ? '#4f46e5' : '#374151',
+                  background: itemSaveSelectedId ? 'linear-gradient(135deg,#4f46e5,#6366f1)' : '#020617',
+                  color: itemSaveSelectedId ? '#e5e7ff' : '#6b7280',
+                  fontSize: 12,
+                  cursor: itemSaveSelectedId ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Save Selected Item
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {hasDeathSummary && deathSummary && (
         <div
           className={deathSummaryPhase === 'exit' ? 'anim-fade-out' : 'anim-fade-in'}
+          onClick={closeDeathSummary}
           style={{
             position: 'fixed',
             inset: 0,
             zIndex: 2000,
-            background: 'radial-gradient(circle at top, rgba(72,85,255,0.28), rgba(5,8,25,0.96))',
+            background: 'rgba(3,7,18,0.88)',
             display: 'grid',
             placeItems: 'center',
             padding: 16,
@@ -939,13 +1170,14 @@ export function App(): JSX.Element {
         >
           <div
             className={deathSummaryPhase === 'exit' ? 'anim-fade-out' : 'anim-scale-in'}
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: 520,
               maxWidth: '96vw',
               borderRadius: 16,
               background: '#050814',
-              border: '1px solid #334155',
-              boxShadow: '0 22px 65px rgba(0,0,0,0.7)',
+              border: '1px solid #1f2447',
+              boxShadow: '0 20px 55px rgba(0,0,0,0.85)',
               padding: 20,
               display: 'grid',
               gridTemplateRows: 'auto auto auto',
@@ -959,18 +1191,18 @@ export function App(): JSX.Element {
                   width: 40,
                   height: 40,
                   borderRadius: 12,
-                  background: 'linear-gradient(135deg,#ef4444,#b91c1c)',
+                  background: 'radial-gradient(circle at 30% 0%,#f97316,#ef4444)',
                   display: 'grid',
                   placeItems: 'center',
-                  boxShadow: '0 0 18px rgba(248,113,113,0.65)',
+                  boxShadow: '0 0 18px rgba(248,113,113,0.55)',
                   flexShrink: 0,
                 }}
               >
-                <span style={{ fontSize: 24 }}>☠</span>
+                <span style={{ fontSize: 22 }}>☠</span>
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 16, fontWeight: 600 }}>
-                  {deathSummary.reason === 'death' ? 'You fell in battle' : 'Run concluded'}
+                  {deathSummary.reason === 'death' ? 'Run lost' : 'Run ended'}
                 </div>
                 <div style={{ fontSize: 12, color: '#a5b4fc', marginTop: 2 }}>
                   {deathSummary.seed && (
@@ -980,21 +1212,6 @@ export function App(): JSX.Element {
                     <span>{deathSummary.seed ? ' • ' : ''}Biomes completed: {deathSummary.biomesCompleted}</span>
                   )}
                 </div>
-                <button
-                  onClick={closeDeathSummary}
-                  className="hover-chip"
-                  style={{
-                    fontSize: 11,
-                    padding: '4px 10px',
-                    borderRadius: 999,
-                    border: '1px solid #4b5563',
-                    background: 'transparent',
-                    color: '#e5e7ff',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Continue
-                </button>
               </div>
             </div>
 
@@ -1025,9 +1242,6 @@ export function App(): JSX.Element {
                     </div>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: '#6b7280' }}>
-                  Thanks for playing this run! Try a new loadout or seed and see how far you get.
-                </div>
               </div>
 
               <div
@@ -1044,7 +1258,7 @@ export function App(): JSX.Element {
               >
                 <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 2 }}>Run Stats</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Enemies Killed</span>
+                  <span>Monsters Killed</span>
                   <span>{deathSummary.metrics.enemiesKilled}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1061,25 +1275,37 @@ export function App(): JSX.Element {
                 </div>
               </div>
             </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: '#9ca3af' }}>
-              <span>
-                Tip: Equip items in the right panel between runs to change your build.
-              </span>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, fontSize: 11, color: '#9ca3af' }}>
               <button
                 onClick={closeDeathSummary}
                 className="hover-chip"
                 style={{
-                  padding: '4px 10px',
+                  padding: '6px 10px',
                   borderRadius: 999,
-                  border: '1px solid #4b5563',
-                  background: '#111827',
-                  color: '#e5e7ff',
+                  border: '1px solid #1f2937',
+                  background: '#020617',
+                  color: '#cbd5f5',
                   cursor: 'pointer',
                   fontSize: 11,
                 }}
               >
-                Close
+                Exit
+              </button>
+              <button
+                onClick={closeDeathSummary}
+                className="hover-chip"
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 999,
+                  border: '1px solid #4f46e5',
+                  background: 'linear-gradient(135deg,#4f46e5,#6366f1)',
+                  color: '#e5e7ff',
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  boxShadow: '0 0 12px rgba(79,70,229,0.6)',
+                }}
+              >
+                Start a new run
               </button>
             </div>
           </div>
