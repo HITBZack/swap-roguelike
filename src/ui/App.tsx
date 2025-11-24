@@ -152,7 +152,8 @@ export function App(): JSX.Element {
       const dt = ts - lastTs
       lastTs = ts
 
-      const enabled = autoPlay && runStats.lives != null && (runStats.lives ?? 0) > 0
+      const isChoiceLikeStage = runStats.stageType === 'choice' || runStats.stageType === 'unique'
+      const enabled = autoPlay && !isChoiceLikeStage && runStats.lives != null && (runStats.lives ?? 0) > 0
       if (!enabled) {
         acc = 0
         phase = 'running'
