@@ -795,9 +795,49 @@ export class GameScene extends Phaser.Scene {
       logContainer.setMask(logMask)
       logContainer.setAlpha(0)
 
-      // Lightweight log buffer and on-screen log
+      // Track total log height and scroll offset so we can scroll within the clipped region
       const scene = this
       let logBuffer = ''
+      let logContentHeight = 0
+      let logScrollOffset = 0
+
+      // Pointer hit area to know when the mouse is over the Battle Log
+      const logHitArea = this.add.rectangle(panelX, logClipTop, panelW, logClipHeight, 0x000000, 0.001)
+        .setOrigin(0)
+        .setInteractive({ useHandCursor: false })
+      let logHover = false
+      logHitArea.on('pointerover', () => { logHover = true })
+      logHitArea.on('pointerout', () => { logHover = false })
+
+      const applyLogScroll = () => {
+        const maxScroll = Math.max(0, logContentHeight - logClipHeight)
+        if (maxScroll <= 0) {
+          logScrollOffset = 0
+          logContainer.y = logClipTop
+          return
+        }
+        logScrollOffset = Math.max(0, Math.min(maxScroll, logScrollOffset))
+        logContainer.y = logClipTop - logScrollOffset
+      }
+
+      const onLogWheel = (_pointer: Phaser.Input.Pointer, _gameObjects: any[], dx: number, dy: number) => {
+        if (!logHover) return
+        // Use wheel deltaY to scroll; positive dy scrolls down (show newer lines at bottom)
+        const step = 24
+        if (dy !== 0) {
+          logScrollOffset += dy > 0 ? step : -step
+          applyLogScroll()
+        } else if (dx !== 0) {
+          // Allow horizontal wheel/trackpad to also scroll vertically for convenience
+          logScrollOffset += dx > 0 ? step : -step
+          applyLogScroll()
+        }
+      }
+
+      this.input.on('wheel', onLogWheel)
+      this.events.once('shutdown', () => {
+        this.input.off('wheel', onLogWheel)
+      })
 
       function getLineColor(line: string): string {
         const trimmed = line.trim()
@@ -813,7 +853,7 @@ export class GameScene extends Phaser.Scene {
         return '#b3c0ff'
       }
 
-      function updateLog(text: string, _toBottom = true) {
+      function updateLog(text: string, toBottom = true) {
         logBuffer = text
         const lines = text.split('\n')
         logContainer.removeAll(true)
@@ -829,6 +869,12 @@ export class GameScene extends Phaser.Scene {
           logContainer.add(t)
           y += t.height + 1
         }
+        logContentHeight = y
+        if (toBottom) {
+          // Auto-scroll to newest entries by default
+          logScrollOffset = Math.max(0, logContentHeight - logClipHeight)
+        }
+        applyLogScroll()
         if (logContainer.alpha < 1 && lines.length > 0) {
           scene.tweens.add({
             targets: logContainer,
