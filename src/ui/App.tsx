@@ -82,10 +82,10 @@ export function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (profile?.is_intro_done && !showAutoPlayHint) {
+    if (profile?.is_intro_done && !autoPlay && !showAutoPlayHint) {
       setShowAutoPlayHint(true)
     }
-  }, [profile?.is_intro_done])
+  }, [profile?.is_intro_done, autoPlay, showAutoPlayHint])
 
   // Keep GameManager's auto-combat flag in sync with Auto-Play
   useEffect(() => {
