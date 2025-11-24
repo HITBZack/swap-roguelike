@@ -476,26 +476,33 @@ export class GameScene extends Phaser.Scene {
         const imgKey = resolveItemImgKey(itemId)
         if (!imgKey || !that.textures.exists(imgKey)) return
         const icon = that.add.image(x, y + 8, imgKey).setOrigin(0.5, 1).setDepth(360)
-        const maxSize = 28
+        const maxSize = 35
         const sw = maxSize / icon.width
         const sh = maxSize / icon.height
-        icon.setScale(Math.min(sw, sh))
+        const scale = Math.min(sw, sh)
+        icon.setScale(scale)
         icon.setAlpha(0)
+
+        const glow = that.add.image(x, y + 8, imgKey).setOrigin(0.5, 1).setDepth(359)
+        glow.setScale(scale * 1.15)
+        glow.setBlendMode(Phaser.BlendModes.ADD)
+        glow.setTint(0xbfd6ff)
+        glow.setAlpha(0)
         that.tweens.add({
-          targets: icon,
+          targets: [icon, glow],
           y: y - 4,
           alpha: 1,
           duration: 220,
           ease: 'Quad.out',
           onComplete: () => {
             that.tweens.add({
-              targets: icon,
+              targets: [icon, glow],
               alpha: 0,
               y: y - 16,
               duration: 260,
               delay: 260,
               ease: 'Quad.in',
-              onComplete: () => { icon.destroy() },
+              onComplete: () => { icon.destroy(); glow.destroy() },
             })
           },
         })
@@ -1555,6 +1562,11 @@ export class GameScene extends Phaser.Scene {
               }
               if (animId) {
                 triggerRunItemAnim(animId, animKind)
+                if (animKind === 'gain') {
+                  const popupX = frame.x
+                  const popupY = frame.y - (frame.displayHeight * 0.12)
+                  showRunItemPopup(animId, popupX, popupY)
+                }
               } else {
                 renderItemsPanel()
               }
@@ -1722,6 +1734,9 @@ export class GameScene extends Phaser.Scene {
                 const delta = afterTotal - beforeTotal
                 if (delta > 0) gameManager.addItemsGained(delta)
                 triggerRunItemAnim(rec.id, 'gain')
+                const popupX = frame.x
+                const popupY = frame.y - (frame.displayHeight * 0.12)
+                showRunItemPopup(rec.id, popupX, popupY)
                 await gameManager.persistRunItems()
                 const cur3 = logBuffer ? `${logBuffer}\n` : ''
                 updateLog(cur3 + `The pedestal hums. Your ${rec.id} is duplicated.`)
