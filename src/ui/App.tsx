@@ -933,7 +933,7 @@ export function App(): JSX.Element {
         </div>
       )}
       {openAccount && (
-        <AccountModal open={openAccount} onClose={() => setOpenAccount(false)} email={email} />
+        <AccountModal onClose={() => setOpenAccount(false)} email={email} />
       )}
       <GuildsModal open={openGuilds} onClose={() => setOpenGuilds(false)} />
       <PlayerCardModal open={openCard} onClose={() => { setOpenCard(false); setOpenCardUserId(null) }} username={player.username ?? ''} email={email} avatarUrl={avatarUrl} userId={openCardUserId ?? undefined} />

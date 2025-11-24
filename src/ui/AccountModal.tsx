@@ -5,7 +5,6 @@ import { uploadAvatar, validateAvatarFile, deleteAvatarByUrl } from '../lib/stor
 import { updateMyAvatarUrl, updateMyCharacterSprite } from '../lib/profile'
 
 export interface AccountModalProps {
-  open: boolean
   onClose: () => void
   email: string
 }
@@ -14,7 +13,7 @@ export interface AccountModalProps {
  * AccountModal
  * Simple account settings modal. Shows email, placeholder settings, and sign-out.
  */
-export function AccountModal({ open, onClose, email }: AccountModalProps): JSX.Element | null {
+export function AccountModal({ onClose, email }: AccountModalProps): JSX.Element | null {
   const username = useAppState((s) => s.player.username)
   const avatarUrl = useAppState((s) => s.player.avatarUrl)
   const level = useAppState((s) => s.player.level)
